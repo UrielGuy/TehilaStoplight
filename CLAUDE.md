@@ -6,8 +6,14 @@ adapter board. It shows three coloured circles with text (English/Hebrew) or
 animated figures, managed from a phone over the ESP32's own WiFi access point.
 
 Read this file first. `docs/ARCHITECTURE.md` has the module map, data model
-and API; `docs/HARDWARE.md` has wiring and bench findings. There is no git
-repository in this folder.
+and API; `docs/HARDWARE.md` has wiring and bench findings.
+
+Git: `main` tracks https://github.com/UrielGuy/TehilaStoplight (private).
+Push with the token in `~/.github_token` on the command line
+(`git push "https://x-access-token:$(tr -d '\r\n' < ~/.github_token)@github.com/UrielGuy/TehilaStoplight.git" main`);
+the `origin` URL deliberately stores no credentials. Commit as
+`Uriel Guy <2401677+UrielGuy@users.noreply.github.com>` (GitHub rejects the
+real address). Commit only when the user asks.
 
 ## Current state (2026-09-20)
 
