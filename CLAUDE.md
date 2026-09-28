@@ -149,9 +149,11 @@ view with the Read tool.
   decoded onto a canvas); frames are cached client-side by
   (lit mask, sprite frame indices). The BMP endpoint exists for tools.
 - Memory is the constraint on the full sign. Keep large buffers static (the
-  preview canvas is allocated once in `WebUI::begin`), keep both task stacks at
-  16 KB, and check `heap`/`heapMin`/`heapBlock` in `/api/state` after a stress
-  run (a 90 s concurrent typing+preview run on 2026-09-28 bottomed at 73 KB).
+  preview canvas is allocated once in `WebUI::begin` and `reset()` per image:
+  its 16-entry palette otherwise fills up with random colours and everything
+  new draws black), keep both task stacks at 16 KB, and check
+  `heap`/`heapMin`/`heapBlock` in `/api/state` after a stress run (a 90 s
+  concurrent typing+preview run on 2026-09-28 bottomed at 73 KB).
 - The HUB75 library applies a CIE1931 gamma table by default, which maps
   level 1 of 3 (value 85) to 0: orange showed as red. `-DNO_CIE1931` in
   `platformio.ini` keeps the 2-bit levels linear. Do not remove it.
