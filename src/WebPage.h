@@ -158,21 +158,23 @@ function playlist(frames,loops){const out=[],n=frames.length;let i=0;while(i<n&&
 function draftJson(){const L=cur();return{...lightsJson(L),m:maskOf(L)}}
 
 /* ---------- preview: timeline of {lights, mask, ms} played on a canvas ---------- */
-const ctx=$('pv').getContext('2d');let frames={},animTimer=null,animGen=0,rolls={};
-function decodeRle(buf){const b=new Uint8Array(buf);if(b[0]!==82||b[1]!==76)return null;const w=b[2]|(b[3]<<8),h=b[4]|(b[5]<<8),n=b[6];const pal=[];for(let i=0;i<n;i++)pal.push([b[7+i*3],b[8+i*3],b[9+i*3]]);
- const img=ctx.createImageData(w,h),d=img.data;let p=0,o=7+n*3;while(o+1<b.length){const v=b[o]|(b[o+1]<<8);o+=2;const c=pal[v>>12]||[0,0,0];let len=v&4095;while(len--&&p<d.length){d[p++]=c[0];d[p++]=c[1];d[p++]=c[2];d[p++]=255}}return img}
+const ctx=$('pv').getContext('2d');let frames={},fails={},animTimer=null,animGen=0,rolls={};
+function decodeRle(buf){const b=new Uint8Array(buf);if(b.length<7||b[0]!==82||b[1]!==76)return null;const w=b[2]|(b[3]<<8),h=b[4]|(b[5]<<8),n=b[6];const pal=[];for(let i=0;i<n;i++)pal.push([b[7+i*3],b[8+i*3],b[9+i*3]]);
+ const img=ctx.createImageData(w,h),d=img.data;let p=0,o=7+n*3;while(o+1<b.length){const v=b[o]|(b[o+1]<<8);o+=2;const c=pal[v>>12]||[0,0,0];let len=v&4095;while(len--&&p<d.length){d[p++]=c[0];d[p++]=c[1];d[p++]=c[2];d[p++]=255}}
+ return p===d.length?img:null}   /* incomplete stream: reject, the caller refetches */
 function timeline(){if(!$('playAll').checked){const f=ed.frames[ed.cur];return[{L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:ed.cur}]}
  const pl=loopErrors().some(Boolean)?ed.frames.map((_,i)=>i):playlist(ed.frames,ed.loops);return pl.map((fi,pi)=>{const f=ed.frames[fi];return{L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:pi}})}
 function roll(fi,i,l){const key=fi+':'+i;if(!rolls[key]){const c=l.c===RND?rnd(0):l.c;rolls[key]={c,f:l.f===RND?rnd(c):l.f}}return rolls[key]}   /* fi = playlist position, so a looped frame re-rolls each pass like the sign does */
 function query(e){const L=e.L;return L.map((l,i)=>{const r=roll(e.fi,i,l);const text=isText(l)?l.t.trim():'';const g=(isText(l)||l.k==='off')?'':l.k;return`t${i}=${encodeURIComponent(text)}&s${i}=${l.s}&c${i}=${r.c}&f${i}=${r.f}&g${i}=${g}&k${i}=${l.k==='off'?'off':''}`}).join('&')}
-const preview=debounce(()=>{const gen=++animGen;clearTimeout(animTimer);frames={};rolls={};if(!$('live').checked)return;liveSend();
+const preview=debounce(()=>{const gen=++animGen;clearTimeout(animTimer);frames={};fails={};rolls={};if(!$('live').checked)return;liveSend();
  const tl=timeline(),cycle=tl.reduce((s,e)=>s+e.ms,0),t0=Date.now();
  const entryAt=ms=>{let t=ms%cycle;for(const e of tl){if(t<e.ms)return e;t-=e.ms}return tl[0]};
  const used=e=>e.L.map(l=>SPRITES.find(s=>s.id===l.k)).filter(Boolean);
  let busy=false;
  const tick=async()=>{if(gen!==animGen)return;const ms=Date.now()-t0,e=entryAt(ms),sp=used(e);const key=e.fi+':'+e.m+':'+sp.map(s=>s.frames>1?Math.floor(ms/s.ms)%s.frames:0).join(',');
   if(frames[key])ctx.putImageData(frames[key],0,0);
-  else if(!busy){busy=true;const b=await fetch(`/api/preview.rle?${query(e)}&m=${e.m}&k=${ms}`).then(r=>r.arrayBuffer()).catch(()=>null);busy=false;if(gen!==animGen)return;if(b){frames[key]=decodeRle(b);if(frames[key])ctx.putImageData(frames[key],0,0)}}
+  else if(!busy&&!(fails[key]>3)){busy=true;const b=await fetch(`/api/preview.rle?${query(e)}&m=${e.m}&k=${ms}`,{cache:'no-store'}).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);busy=false;if(gen!==animGen)return;
+   const img=b&&decodeRle(b);if(img){frames[key]=img;ctx.putImageData(img,0,0)}else{fails[key]=(fails[key]||0)+1;if(fails[key]>3)setTimeout(()=>{fails[key]=0},3000)}}
   const period=(tl.length>1||sp.length)?Math.min(100,...sp.map(s=>s.ms)):0;if(period)animTimer=setTimeout(tick,period)};tick()},150);
 
 /* ---------- live on the LEDs ---------- */

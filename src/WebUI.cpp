@@ -4,6 +4,7 @@
 #include "WebPage.h"
 #include "StopLightApp.h"
 #include "Preview.h"
+#include <vector>
 
 static const byte DNS_PORT = 53;
 
@@ -126,13 +127,20 @@ void WebUI::handlePreview(bool rle) {
   BitmapCanvas* canvas = _canvas;      // only the web task uses it
   Face::draw(*canvas, specs, mask, k);
   if (rle) {
-    _server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    // Build the whole stream first and send it with a Content-Length: a
+    // chunked reply with one lost chunk showed up on phones as a partly
+    // black preview (the browser could not tell the body was incomplete).
+    std::vector<uint8_t>* out = new std::vector<uint8_t>();
+    out->reserve(6144);
+    canvas->rleStream([](const uint8_t* p, size_t n, void* ctx) {
+      auto* v = static_cast<std::vector<uint8_t>*>(ctx);
+      v->insert(v->end(), p, p + n);
+    }, out);
+    _server.setContentLength(out->size());
     _server.sendHeader("Cache-Control", "no-store");
     _server.send(200, "application/octet-stream", "");
-    canvas->rleStream([](const uint8_t* p, size_t n, void* ctx) {
-      static_cast<WebServer*>(ctx)->sendContent((const char*)p, n);
-    }, &_server);
-    _server.sendContent("");   // end of chunked body
+    _server.sendContent((const char*)out->data(), out->size());
+    delete out;
     return;
   }
   uint8_t hdr[BitmapCanvas::BMP_HEADER], row[BitmapCanvas::ROW_BYTES];
