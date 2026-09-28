@@ -13,7 +13,7 @@ WiFi (SSID `StopLight`, password `UriNelli`, http://192.168.4.1/).
 
 ```
 export PATH="$HOME/.local/bin:$PATH"
-pio run -e s3-2                      # two-panel bench; -e s3 for all six panels
+pio run -e s3                        # the sign; -e s3-2 for a loose two-panel bench
 python3 tools/local_server.py        # the web UI locally, no hardware: http://localhost:8080/
 ```
 

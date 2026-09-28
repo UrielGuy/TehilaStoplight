@@ -50,18 +50,21 @@ PlatformIO lives in `~/.local/bin/pio` (pipx):
 
 ```
 export PATH="$HOME/.local/bin:$PATH"
-pio run -e s3-2        # or -e s3
+pio run -e s3          # the sign (six panels); -e s3-2 = loose two-panel bench
 ```
 
 **WSL cannot see USB serial ports.** Flash and monitor through Windows Python,
 which has esptool 5 and pyserial installed:
 
 ```
-python.exe -m esptool --chip esp32s3 --port COM14 --baud 460800 \
+python.exe -m esptool --chip esp32s3 --port COM16 --baud 460800 \
   --before default-reset --after hard-reset write-flash -z \
   --flash-mode keep --flash-freq keep --flash-size keep \
-  0x10000 'C:\repos\TehilaStoplight\.pio\build\s3-2\firmware.bin'
+  0x10000 'C:\repos\TehilaStoplight\.pio\build\s3\firmware.bin'
 ```
+
+Flashing or opening the serial port resets the board (the stored sets in
+NVS survive; the live draft and current position do not).
 
 A brand-new chip also needs `0x0 bootloader.bin 0x8000 partitions.bin 0xe000
 boot_app0.bin` (boot_app0.bin from
@@ -163,12 +166,67 @@ view with the Read tool.
    then a render (`./tools/stopcli ppm t0=STOP t1=המתן t2=GO > x.ppm`).
 2. Harness smoke test with curl (`/api/state`, `/api/check`,
    `/api/preview.rle`, POST `/api/sets`, POST/DELETE `/api/live`).
-3. `pio run -e s3-2` (or `s3`), flash, read the boot log, ask the user what
-   the panels show.
+3. `pio run -e s3`, flash, read the boot log (or hit the API through the
+   dongle), ask the user what the panels show.
+4. For a page change: reload once on the phone (the page is in PROGMEM, no
+   caching headers, but an open tab keeps the old script until reloaded).
+
+## Adding a feature end to end (the usual path)
+
+1. Model: `LightDef` / `KeyFrame` / `TextSet` in `SetStore.h`, JSON in
+   `lightsToJson` / `lightsFromJson` / `setToJson` / `setFromJson`
+   (`SetStore.cpp`). Keep old JSON loadable (defaults with `| x`).
+2. Playback: `StopLightApp::prepareFrame` (what a light looks like) and
+   `loop()` (timing). Rendering primitives live in `Face.*` (portable).
+3. API: `WebUI.cpp` — `sendState`, `parseSet`/`checkLights`, `handlePreview`
+   query keys (`t s c f g k m`), `handleLive`.
+4. Page: `WebPage.h` (one file, HTML+CSS+JS). Editor state is the `ed` object
+   (`name, frames[{lights[3]{k,t,s,c,f}, ms}], loops[{from,to,count}], cur,
+   editing`), persisted to localStorage `stoplight.editor`; `buildLights()`
+   redraws the three-light editor for the selected frame, `buildLoops()` the
+   loop rows, `checkLight(i)` asks `/api/check`, `preview()` builds a timeline
+   (`timeline()`), fetches `/api/preview.rle` per distinct frame and paints a
+   canvas, `liveSend()` pushes `draftJson()` to `/api/live`, `submit(asNew)`
+   posts `setJson()`, `render(state)` draws the set list. Sprites/sizes come
+   from `/api/state` on first load.
+5. Harness: `tools/local_server.py` mirrors the API (validation in
+   `_validate`), `tools/stopcli.cpp` mirrors preview/check. Keep them in step.
+6. Headless check of the page, then build + flash, then docs.
+
+## Testing against the real device from this PC
+
+- Join the USB WiFi dongle (interface name "Wi-Fi 2") to the AP:
+  `netsh wlan connect name=StopLight interface='Wi-Fi 2'` (profile already
+  stored; XML also in `.pio/StopLight.xml`). The PC gets 192.168.4.2.
+  The dongle drops off Windows whenever the board resets if it shares the
+  DevKit's USB hub; put it on another port.
+- Call the API from Windows (`curl.exe`, `python.exe - <<EOF`), never from
+  WSL. Hebrew text: run scripts through `python.exe -` with
+  `sys.stdout.reconfigure(encoding='utf-8')`.
+- `python.exe tools/type_test.py http://192.168.4.1 "text" --live` types a
+  string one character at a time like the page does. For stress, run
+  several request streams in threads (see git history of this session:
+  live pushes every 150 ms + checks + previews + state polls for 90 s).
+- `/api/state` carries `heap`, `heapMin`, `heapBlock` and `frame`; use them
+  to confirm memory and playback without watching the panels.
+
+## Known quirks
+
+- Serial shows `send(): content length is zero` for every chunked preview
+  reply and `request handler not found` for phone captive-portal probes:
+  both harmless.
+- The library prints a refresh rate computed from the requested enum, not
+  the real divider (`S3_LCD_DIV_NUM`).
+- "On your marks" sprite frames are small because all frames of a sprite
+  share one scale and the sprint pose is wide.
+- Live mode holds the LEDs until the switch is turned off, a set is added
+  or saved, or 60 s pass without edits.
 
 ## TODO / ideas the user has raised
 
-- **Upload images / animated GIFs from the page.** Agreed design: the browser
+- **Upload images / animated GIFs from the page.** Design agreed with the user
+  but not started (removed from the immediate plan when the keyframe editor
+  took priority): the browser
   decodes and scales (fit-inside or fill-and-crop), quantises to 2-bit RGB
   with optional dithering, keeps transparency, and sends a small raster file
   (1 byte/pixel, 0x40 = transparent, per-frame delays) as a multipart upload;

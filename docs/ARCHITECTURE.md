@@ -68,7 +68,7 @@ JSON (`SetStore::MAX_JSON_BYTES`), 40 sets, 64 frames and 16 loops per set.
 | `GET /` | the page |
 | `GET /api/state` | `{current, frame, live, heap, heapMin, heapBlock, sets, sizes, sprites}` (`frame` = 0-based frame being shown) |
 | `GET /api/check?text=&light=&size=` | `{ok,size,lines,maxFit}` or `{ok:false,error,maxFit}` |
-| `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&m=&k=` | RLE frame (`m` lit mask, `k` elapsed ms for sprite frames) |
+| `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&k0..k2&m=&k=` | RLE frame (`kN=off` = light dark, `m` lit mask, `k` elapsed ms for sprite frames) |
 | `GET /api/preview.bmp?...` | same as 4-bpp BMP |
 | `POST /api/sets` (set JSON) | add; 400 with reason if a text does not fit or storage is full |
 | `PUT /api/sets/{i}` (set JSON) | replace set i (the page's Edit) |
