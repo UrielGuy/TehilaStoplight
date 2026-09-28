@@ -24,6 +24,10 @@ class StopLightApp {
   void clearDraft();
   bool hasDraft() const { return _draftActive; }
   static constexpr uint32_t LIVE_TIMEOUT_MS = 60000;
+  // The web task must hold this while it changes the store's sets: the
+  // render core reads them while preparing frames.
+  void lockPlayback()   { xSemaphoreTakeRecursive(_lock, portMAX_DELAY); }
+  void unlockPlayback() { xSemaphoreGiveRecursive(_lock); }
 
  private:
   struct Prepared {                   // one display frame, laid out and coloured

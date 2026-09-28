@@ -197,18 +197,19 @@ void WebUI::handleAdd(int replaceIndex) {
     _server.send(400, "application/json; charset=utf-8", out);
     return;
   }
+  _app.lockPlayback();                 // the render core reads sets while preparing frames
   _app.clearDraft();
   TextSet backup;
   if (replaceIndex >= 0) { backup = sets[replaceIndex]; sets[replaceIndex] = s; }
   else sets.push_back(s);
-  if (!_store.save()) {
+  const bool saved = _store.save();
+  if (!saved) {
     if (replaceIndex >= 0) sets[replaceIndex] = backup; else sets.pop_back();
-    _server.send(400, "application/json", "{\"error\":\"storage full: delete a set or shorten this one\"}");
-    return;
-  }
-  if (replaceIndex < 0 && sets.size() == 1) _app.showSet(0);
+  } else if (replaceIndex < 0 && sets.size() == 1) _app.showSet(0);
   else if (replaceIndex >= 0) _app.showSet(replaceIndex);
   else _app.onSetsChanged();
+  _app.unlockPlayback();
+  if (!saved) { _server.send(400, "application/json", "{\"error\":\"storage full: delete a set or shorten this one\"}"); return; }
   sendState();
 }
 
@@ -216,9 +217,11 @@ void WebUI::handleDelete() {
   int i = _server.uri().substring(strlen("/api/sets/")).toInt();
   auto& sets = _store.sets();
   if (i < 0 || i >= (int)sets.size()) { _server.send(404, "application/json", "{\"error\":\"no such set\"}"); return; }
+  _app.lockPlayback();
   sets.erase(sets.begin() + i);
   _store.save();
   _app.onSetsChanged();
+  _app.unlockPlayback();
   sendState();
 }
 

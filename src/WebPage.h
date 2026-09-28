@@ -71,7 +71,7 @@ li .t em{display:block;font-style:normal;color:var(--muted);font-size:12px}li .t
 </div>
 <script>
 const $=id=>document.getElementById(id);
-const DEFC=[48,52,12],RND=64,LV=[0,110,185,255],NAMES=['Top · עליון','Middle · אמצעי','Bottom · תחתון'];
+const DEFC=[48,52,12],RND=64,LV=[0,140,195,255],NAMES=['Top · עליון','Middle · אמצעי','Bottom · תחתון'];
 const NAMED=[['Red',48],['Orange',52],['Yellow',60],['Green',12],['Cyan',15],['Blue',3],['Magenta',51],['White',63],['Pink',53],['Lime',28]];
 let SIZES=[],SPRITES=[],state={sets:[],current:0};
 const css=c=>c===RND?'':`rgb(${LV[(c>>4)&3]},${LV[(c>>2)&3]},${LV[c&3]})`;

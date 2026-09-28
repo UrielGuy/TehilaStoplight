@@ -209,6 +209,12 @@ view with the Read tool.
   live pushes every 150 ms + checks + previews + state polls for 90 s).
 - `/api/state` carries `heap`, `heapMin`, `heapBlock` and `frame`; use them
   to confirm memory and playback without watching the panels.
+- `python.exe tools/ui_flow.py [url]` drives the real page in headless Edge
+  over the DevTools protocol (select a frame, duplicate, edit, change a loop,
+  name, save) and prints any JS exception; edit its step list for other flows.
+- **Never leave test data on the device.** Fetch a set before touching it,
+  restore it afterwards, and never overwrite the user's set with test values
+  (frame durations were lost that way on 2026-09-28).
 
 ## Known quirks
 

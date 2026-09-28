@@ -17,7 +17,7 @@ inline int centreX(int)      { return DIAMETER / 2; }
 inline int centreY(int light){ return light * DIAMETER + DIAMETER / 2; }
 // Default colours: a regular traffic light.
 inline Rgb2 defaultColour(int light) { return light == 0 ? RGB2_RED : light == 1 ? RGB2_ORANGE : RGB2_GREEN; }
-constexpr int RING = 2;                            // unlit light: ring thickness
+constexpr int RING = 3;                            // unlit light: ring thickness (2 px vanished in the phone preview)
 
 // Lay out text for one light; error set if it does not fit. maxFontSize
 // (em size, 0 = automatic) caps the size: the largest fitting size under the

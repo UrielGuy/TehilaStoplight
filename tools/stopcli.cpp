@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
       fwrite(hdr, 1, sizeof hdr, stdout);
       for (int y = BitmapCanvas::H - 1; y >= 0; --y) { c.bmpRow(y, row); fwrite(row, 1, sizeof row, stdout); }
     } else {
-      static const uint8_t L[4] = {0, 110, 185, 255};
+      static const uint8_t L[4] = {0, 140, 195, 255};
       printf("P6\n%d %d\n255\n", BitmapCanvas::W, BitmapCanvas::H);
       for (int y = 0; y < BitmapCanvas::H; ++y)
         for (int x = 0; x < BitmapCanvas::W; ++x) {

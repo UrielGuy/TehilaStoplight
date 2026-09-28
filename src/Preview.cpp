@@ -17,7 +17,7 @@ void BitmapCanvas::bmpHeader(uint8_t hdr[BMP_HEADER]) const {
   put32(hdr + 46, 16);
   // Palette, BGR0, from the per-image Rgb2 colours (level 1 shown a little
   // brighter than 1/3 so dim rings read like a real LED at low drive).
-  static const uint8_t L[4] = {0, 110, 185, 255};
+  static const uint8_t L[4] = {0, 140, 195, 255};   // level 1 shown brighter than 1/3 so dim rings stay visible on a phone
   for (int i = 0; i < 16; ++i) {
     const Rgb2 c = i < _nPal ? _pal[i] : RGB2_BLACK;
     uint8_t* e = hdr + 54 + i * 4;
@@ -27,7 +27,7 @@ void BitmapCanvas::bmpHeader(uint8_t hdr[BMP_HEADER]) const {
 }
 
 void BitmapCanvas::rleStream(Sink sink, void* ctx) const {
-  static const uint8_t L[4] = {0, 110, 185, 255};
+  static const uint8_t L[4] = {0, 140, 195, 255};   // level 1 shown brighter than 1/3 so dim rings stay visible on a phone
   uint8_t hdr[RLE_HEADER_MAX];
   hdr[0] = 'R'; hdr[1] = 'L'; put16(hdr + 2, W); put16(hdr + 4, H); hdr[6] = (uint8_t)_nPal;
   for (int i = 0; i < _nPal; ++i) {
