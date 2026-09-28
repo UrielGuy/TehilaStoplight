@@ -15,7 +15,11 @@ class BitmapCanvas : public Canvas {
   static constexpr size_t BMP_HEADER = 14 + 40 + 16 * 4;
   static constexpr size_t BMP_SIZE = BMP_HEADER + (size_t)ROW_BYTES * H;
 
-  BitmapCanvas() { memset(_px, 0, sizeof(_px)); _pal[0] = RGB2_BLACK; _nPal = 1; }
+  BitmapCanvas() { reset(); }
+  // Clear pixels and the palette. Call before every image when the canvas is
+  // reused: the palette holds at most 16 colours and new ones map to black
+  // once it is full (that made random-coloured previews go black).
+  void reset() { memset(_px, 0, sizeof(_px)); _pal[0] = RGB2_BLACK; _nPal = 1; }
   void set(int x, int y, Rgb2 c) override {
     if (x < 0 || x >= W || y < 0 || y >= H) return;
     const uint8_t idx = index(c);

@@ -125,6 +125,7 @@ void WebUI::handlePreview(bool rle) {
   const uint8_t mask = _server.hasArg("m") ? (_server.arg("m").toInt() & 7) : 7;
   const uint32_t k = _server.arg("k").toInt();
   BitmapCanvas* canvas = _canvas;      // only the web task uses it
+  canvas->reset();                     // fresh palette for every image
   Face::draw(*canvas, specs, mask, k);
   if (rle) {
     // Build the whole stream first and send it with a Content-Length: a
