@@ -18,13 +18,14 @@ class WebUI {
   void handlePreview(bool rle);
   void handleLive(bool on);
   bool parseSet(TextSet& s, String& err);   // from the JSON body
-  void handleAdd();
+  bool checkLights(const LightDef l[3], String& err);
+  void handleAdd(int replaceIndex = -1);
   void handleDelete();
   void handleShow();
-  void handleInterval();
   bool captiveRedirect();
   StopLightApp& _app;
   SetStore& _store;
   WebServer _server;
   DNSServer _dns;
+  class BitmapCanvas* _canvas = nullptr;   // preview scratch, allocated once in begin()
 };

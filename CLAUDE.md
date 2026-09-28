@@ -15,16 +15,33 @@ the `origin` URL deliberately stores no credentials. Commit as
 `Uriel Guy <2401677+UrielGuy@users.noreply.github.com>` (GitHub rejects the
 real address). Commit only when the user asks.
 
-## Current state (2026-09-20)
+## Current state (2026-09-28)
 
 - Controller: **ESP32-S3-DevKitC-1** in a Seengreat/WatangTech "RGB Matrix
   Adapter Board (E)" **rev 2.2**. Pin map in `src/PanelPins.h` (the only one).
-- Build env **`s3`** (six panels) or **`s3-2`** (bench with only the top two
-  panels attached; that is what is flashed right now).
-- Colour depth 2 bits/channel (64 colours), double-buffered.
-- Wired end to end and tested on hardware: text sets, per-text size caps,
-  per-light colours (circle and ink), built-in figure sprites, light
-  animations, live-on-LEDs editing, rotation, pixel-exact preview.
+- Build env **`s3`** (six panels; flashed on 2026-09-28 to a fresh S3 with all
+  six panels attached) or **`s3-2`** (bench with only the top two panels).
+- A blank S3 on its native USB socket shows up in Windows as "USB DFU" with no
+  COM port; use the UART socket (CH343, COM16 last time).
+- On the installed sign every panel sits rotated 180° relative to the default
+  assumption: `FIRST_PANEL_FLIPPED_DEFAULT=1` (default; `s3-2` bench sets 0).
+  Colour pin order is the maker's table; the two loose bench panels need it
+  rotated (see HARDWARE.md).
+- Colour depth 2 bits/channel (64 colours). Single-buffered on the six-panel
+  sign (the second 96 KB buffer starved the heap: concurrent page traffic
+  crashed the device on 2026-09-28); double-buffered on the two-panel bench.
+- A set is a named keyframe sequence (each frame: three lights, duration)
+  with loop sections (frames 6–10 ×10, 12–14 ×4 …), up to 64 frames; per
+  light short/long text, a figure, or Off (dark); per-light colours including
+  random (never black, never one of the last two random picks); size caps;
+  edit of stored sets; live-on-LEDs editing; pixel-exact animated preview.
+  The earlier "lights + animation pattern" mode and the whole-set loop were
+  removed on 2026-09-28 at the user's request. Verified on the sign: a
+  14-frame set with two loop sections played the exact expanded playlist and
+  handed over to the next set.
+- The page keeps the editor draft in localStorage (`stoplight.editor`); a
+  headless check is `msedge.exe --headless=new --dump-dom http://localhost:8080/`
+  against the harness (see docs/ARCHITECTURE.md for the data model).
 - Not done: uploading images/GIFs from the page (design agreed, see TODO).
 
 ## Build, flash, monitor (from WSL)
@@ -52,7 +69,7 @@ boot_app0.bin` (boot_app0.bin from
 
 Find the port first; it changes when the user replugs:
 `powershell.exe -NoProfile -Command "Get-PnpDevice -PresentOnly -Class Ports | Select FriendlyName"`.
-The S3 has two USB sockets: **UART** (CH343, serial log works, COM14 last time)
+The S3 has two USB sockets: **UART** (CH343, serial log works, COM16 last time)
 and **USB** (native; flashing works, log does not since CDC-on-boot is off).
 
 Read the log with a short pyserial script:
@@ -67,9 +84,20 @@ EOF
 ```
 
 A healthy boot prints the DMA refresh line, "Free heap ...", and
-"AP 'StopLight' up". The device API cannot be reached from WSL even when the
-PC is on the `StopLight` network (something on Windows intercepts the route);
-use the local harness for API work.
+"AP 'StopLight' up" (expect ~145 KB free after start on six panels).
+
+**Reaching the device from the PC.** A USB WiFi dongle ("Wi-Fi 2", an
+802.11n USB card) can join the AP while the main adapter keeps the internet:
+`netsh wlan add profile filename='C:\repos\TehilaStoplight\.pio\StopLight.xml' interface='Wi-Fi 2'`
+then `netsh wlan connect name=StopLight interface='Wi-Fi 2'` (profile XML is
+in `.pio/`, regenerate it from the SSID/password if missing). Requests must
+come from Windows (`curl.exe`, `python.exe`), not WSL; WSL's route and
+sometimes the first Windows requests get intercepted by something that
+answers with an nginx 301 / self-signed TLS. `tools/type_test.py <base> <text>
+--live` imitates typing one character at a time. For crash hunting, log the
+UART with a long-running pyserial script started *before* the test and stop
+it before flashing (only one process can hold the COM port; a stale
+`python3.13` process holding it must be killed with `Stop-Process`).
 
 ## Local harness (no hardware needed)
 
@@ -84,7 +112,7 @@ automatically when sources change). Sets go to `tools/local_sets.json`;
 `fuser -k 8080/tcp`; **never `pkill -f local_server`** from a Bash tool call,
 it matches the calling shell.
 
-`tools/stopcli` subcommands: `sizes`, `anims`, `sprites`,
+`tools/stopcli` subcommands: `sizes`, `sprites`,
 `check <light> <text> [maxSize]`, and `preview|rle|ppm key=value...` (keys are
 the web API query keys, e.g. `t0=STOP g2=dancing k=440 c0=3 f0=63 m=7`).
 To eyeball a layout: `stopcli ppm ... > x.ppm`, convert to PNG with Pillow,
@@ -93,7 +121,7 @@ view with the Read tool.
 ## Conventions and gotchas
 
 - **Portable core vs Arduino.** `Canvas.h`, `Font.h`, `Sprite.h`,
-  `TextLayout.*`, `Face.*`, `Preview.*`, `Animation.*` must stay free of
+  `TextLayout.*`, `Face.*`, `Preview.*` must stay free of
   Arduino headers so the harness compiles with plain g++ (`PROGMEM` shims are
   in `Font.h`). Firmware-only: `SnakeDisplay.*`, `DisplayCanvas.h`,
   `SetStore.*`, `StopLightApp.*`, `WebUI.*`, `WebPage.h`, `main.cpp`.
@@ -104,9 +132,11 @@ view with the Read tool.
   and `src/sprites/Sprites.h` (`tools/gen_sprites.py`, jointed-pose figures at
   64×96). Both generators need Pillow under WSL `python3`.
 - Rendering runs on **core 1** (Arduino `loop()`), the web server + captive
-  DNS in a task on **core 0**. `StopLightApp` guards shared state with a
-  mutex. Web handlers must not render; they set state and the render loop
-  picks it up (that is how live drafts avoid queueing behind each other).
+  DNS in a task on **core 0**. `StopLightApp::loop()` holds a recursive mutex
+  for its whole pass because web handlers (add/edit/show/delete) rebuild the
+  prepared frames through `renderCurrent()`; a set added while another played
+  crashed the device before that (2026-09-28). Live drafts are only stored by
+  the web task and applied by the render loop.
 - Double buffering: a full redraw is written to **both** DMA buffers before
   the cheap sprite-box repaints, else the stale buffer shows on alternate
   frames. `StopLightApp::render()` does this.
@@ -115,6 +145,10 @@ view with the Read tool.
 - Preview for the page is `/api/preview.rle` (~3 KB run-length frames,
   decoded onto a canvas); frames are cached client-side by
   (lit mask, sprite frame indices). The BMP endpoint exists for tools.
+- Memory is the constraint on the full sign. Keep large buffers static (the
+  preview canvas is allocated once in `WebUI::begin`), keep both task stacks at
+  16 KB, and check `heap`/`heapMin`/`heapBlock` in `/api/state` after a stress
+  run (a 90 s concurrent typing+preview run on 2026-09-28 bottomed at 73 KB).
 - The HUB75 library applies a CIE1931 gamma table by default, which maps
   level 1 of 3 (value 85) to 0: orange showed as red. `-DNO_CIE1931` in
   `platformio.ini` keeps the 2-bit levels linear. Do not remove it.
@@ -125,7 +159,7 @@ view with the Read tool.
 
 ## Verifying a change
 
-1. `g++ -std=c++11 -O2 -Wall -Isrc tools/stopcli.cpp src/TextLayout.cpp src/Face.cpp src/Preview.cpp src/Animation.cpp -o tools/stopcli`
+1. `g++ -std=c++11 -O2 -Wall -Isrc tools/stopcli.cpp src/TextLayout.cpp src/Face.cpp src/Preview.cpp -o tools/stopcli`
    then a render (`./tools/stopcli ppm t0=STOP t1=המתן t2=GO > x.ppm`).
 2. Harness smoke test with curl (`/api/state`, `/api/check`,
    `/api/preview.rle`, POST `/api/sets`, POST/DELETE `/api/live`).
@@ -144,5 +178,3 @@ view with the Read tool.
   harness needs the same endpoints (`tools/gfx/`).
 - The "On your marks" sprite comes out small because all frames of a sprite
   share one scale and the sprinting pose is wide.
-- The six-panel build (`s3`) compiles but has not been run on all six panels
-  since the S3 bring-up.

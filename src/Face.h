@@ -27,11 +27,11 @@ TextLayout layoutFor(int light, const std::string& utf8, int maxFontSize = 0);
 int fontSizeCount();
 int fontSize(int index);
 // What one light shows: a sprite if set, else the text layout (either may be
-// null). bg = circle colour (0 = default), fg = ink colour (text / figure).
+// null = just the circle). bg = circle colour (0 = black), fg = ink colour.
 struct LightSpec {
   const TextLayout* text = nullptr;
   const Sprite* sprite = nullptr;
-  Rgb2 bg = 0;
+  Rgb2 bg = RGB2_RED;
   Rgb2 fg = RGB2_BLACK;
 };
 

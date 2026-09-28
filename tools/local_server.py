@@ -17,7 +17,7 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 MAX_TEXT_BYTES = 720
 
 def build_cli():
-    srcs = ["tools/stopcli.cpp", "src/TextLayout.cpp", "src/Face.cpp", "src/Preview.cpp", "src/Animation.cpp"]
+    srcs = ["tools/stopcli.cpp", "src/TextLayout.cpp", "src/Face.cpp", "src/Preview.cpp"]
     newest = max(os.path.getmtime(os.path.join(ROOT, p)) for p in srcs + ["src/fonts/StopFonts.h", "src/TextLayout.h", "src/Face.h"])
     if os.path.exists(CLI) and os.path.getmtime(CLI) >= newest:
         return
@@ -32,7 +32,7 @@ def page():
 def load():
     if os.path.exists(STORE):
         return json.load(open(STORE, encoding="utf-8"))
-    return {"interval": 60, "sets": [{"t": ["STOP", "WAIT", "GO"]}]}
+    return {"sets": [{"name": "Example", "frames": [{"t": ["STOP", "WAIT", "GO"], "k": ["short", "short", "short"], "g": ["", "", ""], "s": [0, 0, 0], "c": [48, 52, 12], "f": [0, 0, 0], "m": 7, "ms": 10000}], "loop": {"count": 1}}]}
 
 def save(state):
     json.dump(state, open(STORE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -46,9 +46,6 @@ def check(light, text, max_size=0):
 
 def sizes():
     return json.loads(subprocess.run([CLI, "sizes"], capture_output=True, text=True).stdout or "[]")
-
-def anims():
-    return json.loads(subprocess.run([CLI, "anims"], capture_output=True, text=True).stdout or "[]")
 
 def sprites():
     return json.loads(subprocess.run([CLI, "sprites"], capture_output=True, text=True).stdout or "[]")
@@ -64,7 +61,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _state(self):
-        self._json({"interval": state["interval"], "current": state["current"], "live": state.get("live", False), "sets": state["sets"], "sizes": sizes(), "animations": anims(), "sprites": sprites()})
+        self._json({"current": state["current"], "live": state.get("live", False), "sets": state["sets"], "sizes": sizes(), "sprites": sprites()})
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
@@ -101,44 +98,70 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(n) or b"{}")
 
+    def _validate(self, body):
+        """Mirror the firmware: every non-graphic, non-empty text must fit."""
+        def check_lights(o, prefix=""):
+            for i, name in enumerate(["top", "middle", "bottom"]):
+                if (o.get("k") or ["", "", ""])[i] == "off":
+                    continue
+                g = (o.get("g") or ["", "", ""])[i]
+                if g:
+                    if g not in {s["id"] for s in sprites()}:
+                        return f"{prefix}{name}: unknown graphic"
+                    continue
+                t = str((o.get("t") or ["", "", ""])[i]).strip()
+                if not t:
+                    continue
+                r = check(i, t, int((o.get("s") or [0, 0, 0])[i] or 0))
+                if not r["ok"]:
+                    return f"{prefix}{name}: {r['error']}"
+            return None
+        if not body.get("frames"):
+            return "no frames"
+        if len(body["frames"]) > 64:
+            return "at most 64 frames"
+        n = len(body["frames"])
+        for L in body.get("loops") or []:
+            if not (1 <= L.get("from", 0) <= L.get("to", 0) <= n):
+                return "loop outside the set"
+        for k, f in enumerate(body["frames"]):
+            e = check_lights(f, f"frame {k + 1}, ")
+            if e:
+                return e
+        return None
+
+    def _store_set(self, body, replace=None):
+        err = self._validate(body)
+        if err:
+            return self._json({"error": err}, 400)
+        if replace is None:
+            state["sets"].append(body)
+        elif 0 <= replace < len(state["sets"]):
+            state["sets"][replace] = body
+        state["live"] = False
+        save(state)
+        self._state()
+
+    def do_PUT(self):
+        u = urllib.parse.urlparse(self.path)
+        if u.path.startswith("/api/sets/"):
+            return self._store_set(self._body(), replace=int(u.path.rsplit("/", 1)[1]))
+        self.send_error(404)
+
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         if u.path == "/api/sets":
-            body = self._body()
-            t = [str(x).strip() for x in body.get("t", ["", "", ""])][:3] + [""] * 3
-            sz = [int(x or 0) for x in body.get("s", [0, 0, 0])][:3] + [0] * 3
-            gsel = body.get("g", ["", "", ""])
-            for i, name in enumerate(["top", "middle", "bottom"]):
-                if i < len(gsel) and gsel[i]:
-                    continue
-                r = check(i, t[i], sz[i])
-                if not r["ok"]:
-                    return self._json({"error": f"{name}: {r['error']}"}, 400)
-            ids = {a["id"] for a in anims()}
-            a = body.get("a", "all"); a = a if a in ids else "all"
-            p = max(100, min(60000, int(body.get("p", 1000) or 1000)))
-            defaults = [48, 52, 12]
-            c = [int(x) & 63 if x not in (None, "") else defaults[i] for i, x in enumerate((body.get("c", defaults) + defaults)[:3])]
-            f = [int(x or 0) & 63 for x in (body.get("f", [0, 0, 0]) + [0, 0, 0])[:3]]
-            valid = {s["id"] for s in sprites()}
-            g = [x if x in valid else "" for x in (body.get("g", ["", "", ""]) + ["", "", ""])[:3]]
-            state["sets"].append({"t": t[:3], "s": sz[:3], "c": c, "f": f, "g": g, "a": a, "p": p})
-            save(state)
-            self._state()
+            self._store_set(self._body())
         elif u.path.startswith("/api/show/"):
             i = int(u.path.rsplit("/", 1)[1])
             if 0 <= i < len(state["sets"]):
                 state["current"] = i
-                print(f"[display] now showing set {i + 1}: {state['sets'][i]['t']}")
+                print(f"[display] now showing set {i + 1}")
             self._state()
         elif u.path == "/api/live":
             b = self._body()
             state["live"] = True
-            print(f"[display] LIVE draft: {b.get('t')} g={b.get('g')} a={b.get('a')}")
-            self._state()
-        elif u.path == "/api/interval":
-            state["interval"] = max(5, min(86400, int(self._body().get("seconds", 60))))
-            save(state)
+            print(f"[display] LIVE draft: {b.get('t')} g={b.get('g')} m={b.get('m')}")
             self._state()
         else:
             self.send_error(404)
@@ -161,7 +184,7 @@ class H(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def log_message(self, fmt, *args):
-        if "/api/preview" not in (args[0] if args else "") and "/api/state" not in (args[0] if args else ""):
+        if "/api/preview" not in str(args[0] if args else "") and "/api/state" not in str(args[0] if args else ""):
             super().log_message(fmt, *args)
 
 if __name__ == "__main__":

@@ -4,11 +4,11 @@
 #include "WebPage.h"
 #include "StopLightApp.h"
 #include "Preview.h"
-#include "Animation.h"
 
 static const byte DNS_PORT = 53;
 
 void WebUI::begin(const char* ssid, const char* password) {
+  _canvas = new BitmapCanvas();   // 24 KB, kept for the life of the server
   WiFi.mode(WIFI_AP);
   // Channel 6, visible SSID, up to 4 clients: channel 1 (the default) is
   // occasionally hidden by phones that filter overlapping networks.
@@ -28,10 +28,10 @@ void WebUI::begin(const char* ssid, const char* password) {
   _server.on("/api/live", HTTP_POST, [this] { handleLive(true); });
   _server.on("/api/live", HTTP_DELETE, [this] { handleLive(false); });
   _server.on("/api/sets", HTTP_POST, [this] { handleAdd(); });
-  _server.on("/api/interval", HTTP_POST, [this] { handleInterval(); });
   _server.onNotFound([this] {
     const String& uri = _server.uri();
     if (uri.startsWith("/api/sets/") && _server.method() == HTTP_DELETE) { handleDelete(); return; }
+    if (uri.startsWith("/api/sets/") && _server.method() == HTTP_PUT) { handleAdd(uri.substring(strlen("/api/sets/")).toInt()); return; }
     if (uri.startsWith("/api/show/") && _server.method() == HTTP_POST)   { handleShow();   return; }
     if (captiveRedirect()) return;
     _server.send(404, "text/plain", "not found");
@@ -58,9 +58,12 @@ bool WebUI::captiveRedirect() {
 
 void WebUI::sendState() {
   JsonDocument doc;
-  doc["interval"] = _store.intervalSec();
   doc["current"] = _app.current();
   doc["live"] = _app.hasDraft();
+  doc["frame"] = _app.frameIndex();
+  doc["heap"] = ESP.getFreeHeap();
+  doc["heapMin"] = ESP.getMinFreeHeap();
+  doc["heapBlock"] = ESP.getMaxAllocHeap();
   JsonArray sizes = doc["sizes"].to<JsonArray>();
   for (int i = 0; i < Face::fontSizeCount(); ++i) sizes.add(Face::fontSize(i));
   JsonArray sprites = doc["sprites"].to<JsonArray>();
@@ -69,25 +72,8 @@ void WebUI::sendState() {
     JsonObject o = sprites.add<JsonObject>();
     o["id"] = s.id; o["name"] = s.name; o["frames"] = s.nFrames; o["ms"] = s.frameMs;
   }
-  JsonArray anims = doc["animations"].to<JsonArray>();
-  for (int i = 0; i < animationCount(); ++i) {
-    const Animation& a = animationAt(i);
-    JsonObject o = anims.add<JsonObject>();
-    o["id"] = a.id; o["name"] = a.name;
-    JsonArray st = o["steps"].to<JsonArray>();
-    for (int k = 0; k < a.nSteps; ++k) { JsonArray s = st.add<JsonArray>(); s.add(a.steps[k].mask); s.add(a.steps[k].units); }
-  }
   JsonArray arr = doc["sets"].to<JsonArray>();
-  for (const TextSet& s : _store.sets()) {
-    JsonObject o = arr.add<JsonObject>();
-    JsonArray t = o["t"].to<JsonArray>();
-    JsonArray sz = o["s"].to<JsonArray>();
-    JsonArray col = o["c"].to<JsonArray>();
-    JsonArray ink = o["f"].to<JsonArray>();
-    JsonArray gr = o["g"].to<JsonArray>();
-    for (int i = 0; i < 3; ++i) { t.add(s.text[i]); sz.add(s.size[i]); col.add(s.colour[i]); ink.add(s.ink[i]); gr.add(s.graphic[i]); }
-    o["a"] = s.anim; o["p"] = s.unitMs;
-  }
+  for (const TextSet& st : _store.sets()) setToJson(arr.add<JsonObject>(), st);
   String out;
   serializeJson(doc, out);
   _server.sendHeader("Cache-Control", "no-store");
@@ -97,6 +83,8 @@ void WebUI::sendState() {
 // ok/size/lines for the capped layout, plus maxFit = the largest size that
 // fits with no cap (what "automatic" would pick).
 static void checkInto(JsonObject o, int light, const String& text, int maxSize) {
+  String tt = text; tt.trim();
+  if (tt.isEmpty()) { o["ok"] = true; o["size"] = 0; o["lines"] = 0; o["maxFit"] = 0; return; }
   TextLayout L = Face::layoutFor(light, text.c_str(), maxSize);
   o["ok"] = L.ok();
   if (L.ok()) { o["size"] = L.font->size; o["lines"] = L.lines; }
@@ -126,16 +114,16 @@ void WebUI::handlePreview(bool rle) {
   for (int i = 0; i < Face::LIGHTS; ++i) {
     const String n = String(i);
     specs[i].sprite = Face::spriteById(_server.arg("g" + n).c_str());
-    if (!specs[i].sprite) {
+    if (!specs[i].sprite && _server.arg("k" + n) != "off") {
       L[i] = Face::layoutFor(i, _server.arg("t" + n).c_str(), _server.arg("s" + n).toInt());
       specs[i].text = &L[i];   // a text that does not fit renders as an empty circle
     }
-    specs[i].bg = _server.hasArg("c" + n) ? (_server.arg("c" + n).toInt() & 63) : 0;
+    specs[i].bg = _server.hasArg("c" + n) ? (_server.arg("c" + n).toInt() & 63) : Face::defaultColour(i);
     specs[i].fg = _server.arg("f" + n).toInt() & 63;
   }
   const uint8_t mask = _server.hasArg("m") ? (_server.arg("m").toInt() & 7) : 7;
   const uint32_t k = _server.arg("k").toInt();
-  auto* canvas = new BitmapCanvas();   // 24 KB; heap rather than stack
+  BitmapCanvas* canvas = _canvas;      // only the web task uses it
   Face::draw(*canvas, specs, mask, k);
   if (rle) {
     _server.setContentLength(CONTENT_LENGTH_UNKNOWN);
@@ -145,7 +133,6 @@ void WebUI::handlePreview(bool rle) {
       static_cast<WebServer*>(ctx)->sendContent((const char*)p, n);
     }, &_server);
     _server.sendContent("");   // end of chunked body
-    delete canvas;
     return;
   }
   uint8_t hdr[BitmapCanvas::BMP_HEADER], row[BitmapCanvas::ROW_BYTES];
@@ -158,44 +145,51 @@ void WebUI::handlePreview(bool rle) {
     canvas->bmpRow(y, row);
     _server.sendContent((const char*)row, sizeof(row));
   }
-  delete canvas;
 }
 
-// Reads a set from the JSON body. err is set (and false returned) when a
-// text does not fit; the set is still filled in so a live draft can show it.
+// Every text of a light must fit (empty is fine: a blank light).
+bool WebUI::checkLights(const LightDef l[3], String& err) {
+  static const char* names[3] = {"top", "middle", "bottom"};
+  for (int i = 0; i < 3; ++i) {
+    if (l[i].graphic.length()) {
+      if (!Face::spriteById(l[i].graphic.c_str())) { err = String(names[i]) + ": unknown graphic"; return false; }
+      continue;
+    }
+    if (l[i].text.length() > SetStore::MAX_TEXT_BYTES) { err = String(names[i]) + ": text too long"; return false; }
+    String t = l[i].text; t.trim();
+    if (t.isEmpty()) continue;
+    TextLayout L = Face::layoutFor(i, l[i].text.c_str(), l[i].size);
+    if (!L.ok()) { err = String(names[i]) + ": " + L.error.c_str(); return false; }
+  }
+  return true;
+}
+
+// Reads a set from the JSON body and validates every text.
 bool WebUI::parseSet(TextSet& s, String& err) {
   JsonDocument doc;
   if (deserializeJson(doc, _server.arg("plain"))) { err = "bad json"; return false; }
-  static const char* names[3] = {"top", "middle", "bottom"};
-  bool ok = true;
-  for (int i = 0; i < 3; ++i) {
-    s.text[i] = (const char*)(doc["t"][i] | "");
-    s.text[i].trim();
-    s.size[i] = doc["s"][i] | 0;
-    s.colour[i] = (doc["c"][i] | (int)Face::defaultColour(i)) & 63;
-    s.ink[i] = (doc["f"][i] | 0) & 63;
-    s.graphic[i] = Face::spriteById((const char*)(doc["g"][i] | "")) ? (const char*)doc["g"][i] : "";
-    if (s.graphic[i].length() || !ok) continue;
-    if (s.text[i].length() > SetStore::MAX_TEXT_BYTES) { err = String(names[i]) + ": text too long"; ok = false; continue; }
-    TextLayout L = Face::layoutFor(i, s.text[i].c_str(), s.size[i]);
-    if (!L.ok()) { err = String(names[i]) + ": " + L.error.c_str(); ok = false; }
-  }
-  s.anim = animationById((const char*)(doc["a"] | "all")).id;
-  int p = doc["p"] | 1000;
-  s.unitMs = p < 100 ? 100 : p > 60000 ? 60000 : p;
-  return ok;
+  setFromJson(doc.as<JsonObjectConst>(), s);
+  if (s.frames.empty()) { err = "no frames"; return false; }
+  if (doc["frames"].size() > SetStore::MAX_FRAMES) { err = "at most " + String(SetStore::MAX_FRAMES) + " frames"; return false; }
+  for (size_t k = 0; k < s.frames.size(); ++k)
+    if (!checkLights(s.frames[k].l, err)) { err = "frame " + String(k + 1) + ", " + err; return false; }
+  return true;
 }
 
 void WebUI::handleLive(bool on) {
   if (!on) { _app.clearDraft(); sendState(); return; }
-  TextSet s; String err;
-  parseSet(s, err);            // a text that does not fit just shows as an empty circle
-  _app.setDraft(s);
+  JsonDocument doc;
+  if (deserializeJson(doc, _server.arg("plain"))) { _server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+  KeyFrame f;
+  frameFromJson(doc.as<JsonObjectConst>(), f);   // a text that does not fit just shows as an empty circle
+  _app.setDraft(f);
   sendState();
 }
 
-void WebUI::handleAdd() {
-  if (_store.sets().size() >= SetStore::MAX_SETS) { _server.send(400, "application/json", "{\"error\":\"too many sets\"}"); return; }
+void WebUI::handleAdd(int replaceIndex) {
+  auto& sets = _store.sets();
+  if (replaceIndex < 0 && sets.size() >= SetStore::MAX_SETS) { _server.send(400, "application/json", "{\"error\":\"too many sets\"}"); return; }
+  if (replaceIndex >= (int)sets.size()) { _server.send(404, "application/json", "{\"error\":\"no such set\"}"); return; }
   TextSet s; String err;
   if (!parseSet(s, err)) {
     JsonDocument e; e["error"] = err;
@@ -204,9 +198,17 @@ void WebUI::handleAdd() {
     return;
   }
   _app.clearDraft();
-  _store.sets().push_back(s);
-  _store.save();
-  if (_store.sets().size() == 1) _app.showSet(0); else _app.onSetsChanged();
+  TextSet backup;
+  if (replaceIndex >= 0) { backup = sets[replaceIndex]; sets[replaceIndex] = s; }
+  else sets.push_back(s);
+  if (!_store.save()) {
+    if (replaceIndex >= 0) sets[replaceIndex] = backup; else sets.pop_back();
+    _server.send(400, "application/json", "{\"error\":\"storage full: delete a set or shorten this one\"}");
+    return;
+  }
+  if (replaceIndex < 0 && sets.size() == 1) _app.showSet(0);
+  else if (replaceIndex >= 0) _app.showSet(replaceIndex);
+  else _app.onSetsChanged();
   sendState();
 }
 
@@ -227,10 +229,3 @@ void WebUI::handleShow() {
   sendState();
 }
 
-void WebUI::handleInterval() {
-  JsonDocument doc;
-  if (deserializeJson(doc, _server.arg("plain"))) { _server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
-  _store.setIntervalSec(doc["seconds"] | 60);
-  _store.save();
-  sendState();
-}

@@ -28,9 +28,14 @@ class SnakeDisplay {
   static constexpr uint8_t COLOR_BITS = 2;              // bits per channel
   static constexpr uint8_t MAX_LEVEL  = (1 << COLOR_BITS) - 1;  // 3
 
-  // Set to true if, physically, the panel the ESP32 plugs into is the one
-  // whose input connector is on the RIGHT (i.e. the chain starts flipped).
-  static constexpr bool FIRST_PANEL_FLIPPED = false;
+  // Every panel's content rotated 180 degrees relative to the default
+  // assumption: the panel the adapter plugs into (top) has its input on the
+  // RIGHT, the next one on the left, and so on. Verified on the installed
+  // sign 2026-09-28. Build flag; the loose two-panel bench uses 0.
+#ifndef FIRST_PANEL_FLIPPED_DEFAULT
+#define FIRST_PANEL_FLIPPED_DEFAULT 1
+#endif
+  static constexpr bool FIRST_PANEL_FLIPPED = FIRST_PANEL_FLIPPED_DEFAULT;
 
   SnakeDisplay() = default;
   ~SnakeDisplay();

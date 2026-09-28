@@ -21,22 +21,33 @@ rev 2.2 (maker wiki: seengreat.com/wiki/186). The adapter has sockets for both
 the ESP32-DevKitC V4 and the S3-DevKitC-1; each socket has its own pin map and
 board revisions differ. Only the S3 socket is used now.
 
-S3 socket, rev 2.x, **as verified on the bench** (the wiki's colour rows are
-rotated relative to what the panel shows: red came out blue; the colour pins
-in `PanelPins.h` are rotated accordingly):
+S3 socket, rev 2.x, the maker's table as printed, verified with the six
+installed panels on 2026-09-28:
 
 | Signal | GPIO | Signal | GPIO |
 | --- | --- | --- | --- |
-| R1 | 8 | R2 | 1 |
-| G1 | 17 | G2 | 15 |
-| B1 | 18 | B2 | 16 |
+| R1 | 18 | R2 | 16 |
+| G1 | 8 | G2 | 1 |
+| B1 | 17 | B2 | 15 |
 | A | 7 | B | 48 |
 | C | 6 | D | 47 |
 | E | 2 | CLK | 5 |
 | LAT | 21 | OE | 4 |
 
+The two loose bench panels (a different batch) have their colour inputs
+rotated: with them, use R1 8, G1 17, B1 18, R2 1, G2 15, B2 16.
+
 The adapter's ESP32 (non-S3) socket uses GPIOs 22–33, which do not exist or
 are flash pins on an S3; never reuse that map here.
+
+## Mounting of the installed sign
+
+Chain panel 0 (fed by the adapter) is the top panel, but every panel is
+mounted rotated 180° relative to the firmware's default assumption: the top
+panel's input is on the right, the next one's on the left, and so on. The
+firmware therefore flips the parity (`FIRST_PANEL_FLIPPED_DEFAULT=1`, the
+default; the `s3-2` bench env sets 0). Symptom before the fix, 2026-09-28: the
+two halves of each circle swapped and the lights in reverse order.
 
 ## Serial / flashing
 
@@ -46,11 +57,22 @@ are flash pins on an S3; never reuse that map here.
 - esptool 5.x on Windows Python 3.13; use the dashed option names
   (`write-flash`, `--flash-mode keep`). Bootloader at 0x0 on the S3.
 
+## Memory on the full sign
+
+With six panels one DMA buffer is 96 KB. Double buffering left ~77 KB of
+heap and the device rebooted under concurrent web traffic (live typing plus
+preview frames); single buffering gives ~145 KB after start. Sprite frames
+repaint only their own box, so the single buffer does not tear visibly.
+
 ## Driver settings
 
-- `HUB75_I2S_CFG` via `SnakeDisplay::Options`: clock 10 MHz (20 MHz possible
-  with clean wiring), `min_refresh_rate 60`, double-buffered.
-- 2 bits/channel: 48 KB per bit-plane per buffer for six panels; 108 Hz
-  refresh on six panels at 10 MHz, 325 Hz on two.
+- Pixel clock on the S3 is 160 MHz / `S3_LCD_DIV_NUM` (build flag in
+  `platformio.ini`); the library's `HZ_20M` really means divider 7 = 22.9 MHz,
+  and its printed refresh rate is computed from the requested enum, not the
+  divider. Divider 6 = 26.7 MHz (~316 Hz on six panels) is in use; 10 MHz gave
+  108 Hz and felt flickery. Divider 5 = 32 MHz is the next step and is at the
+  edge of the panel driver chips' rating. `min_refresh_rate 60`; double
+  buffering only on the two-panel bench.
+- 2 bits/channel: 48 KB per bit-plane per buffer for six panels.
 - Some 128×64 panels need the FM6126A init sequence
   (`cfg.driver = HUB75_I2S_CFG::FM6126A`); these do not.

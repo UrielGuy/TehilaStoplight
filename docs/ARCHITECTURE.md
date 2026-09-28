@@ -7,8 +7,8 @@ web page (phone)  --JSON/RLE-->  WebUI (core 0)  --sets, drafts-->  SetStore (NV
                                                      |
                                                      v  (mutex)
                                   StopLightApp (core 1, Arduino loop)
-                                     | prepare(): TextLayout per light, sprite, colours, animation
-                                     | loop(): rotation timer, animation mask, sprite frames, drafts
+                                     | prepare(): one Prepared frame per keyframe (layouts, sprites, colours)
+                                     | loop(): keyframe timing, loop count/seconds, sprite frames, drafts
                                      v
                                   Face::draw / drawSpriteBoxes  --Canvas-->  DisplayCanvas -> SnakeDisplay -> HUB75 DMA
                                                                           \-> BitmapCanvas -> BMP / RLE (previews)
@@ -25,44 +25,56 @@ web page (phone)  --JSON/RLE-->  WebUI (core 0)  --sets, drafts-->  SetStore (NV
 | `TextLayout.*` | UTF-8 decode, nikud strip, simple bidi (Hebrew runs reversed, brackets mirrored), word split with forced breaks (`\n`), exhaustive line-break search per font size (largest size, fewest lines, most balanced), ink-centred placement inside a circle, `maxFontSize` cap. | yes |
 | `Sprite.h`, `sprites/Sprites.h` | 1-bpp animated pictograms 64×96 (standing, ready, dancing). | yes |
 | `Face.*` | Draws three 128 px circles with text or sprite, per-light colours, lit mask (unlit = dim 2 px ring), `drawSpriteBoxes` for cheap frame updates. Font/sprite lookup. | yes |
-| `Animation.*` | Light animations as step lists (mask, units). `animationMask(anim, unitMs, elapsedMs)`. | yes |
 | `Preview.*` | `BitmapCanvas` (4 bpp, per-image palette ≤16) → BMP (tools) or RLE stream (page). | yes |
 | `DisplayCanvas.h` | Canvas → SnakeDisplay. | no |
 | `SetStore.*` | `TextSet` + JSON persistence in NVS (`Preferences`, blob "sets"). | no |
-| `StopLightApp.*` | Current set, rotation, animation/sprite timing, live draft, mutex, full vs partial renders. | no |
+| `StopLightApp.*` | Plays keyframe sets through the expanded playlist, prepares frames just in time (two slots), sprite timing, live draft, recursive mutex held for the whole render pass, full vs sprite-box renders. | no |
 | `WebUI.*`, `WebPage.h` | SoftAP + captive DNS + HTTP API + the single-page UI (PROGMEM, self-contained, no external assets). | no |
 | `main.cpp` | Display init, store, app, AP; web task on core 0, render loop on core 1. | no |
 
 ## Data model
 
-A set (`TextSet`, JSON in NVS and in the API):
+A set (`TextSet`, JSON in NVS and in the API) is a named keyframe sequence.
+Light arrays are always indexed top, middle, bottom.
 
 ```json
-{"t":["STOP","המתן","GO"],   // texts (UTF-8), ignored for a light with a graphic
- "s":[0,36,0],               // max font em size per light, 0 = automatic
- "c":[48,52,12],             // circle colours, Rgb2 0bRRGGBB (red, orange, green)
- "f":[0,0,0],                // ink colours (text/figure), default black
- "g":["","","dancing"],      // sprite id per light, "" = text
- "a":"traffic", "p":800}     // light animation id and unit in ms
+{"name":"Morning",
+ "frames":[
+   {"t":["STOP","המתן",""],          // texts (UTF-8), ignored for a graphic or an off light
+    "k":["short","long","off"],      // short/long = which text box the page shows; off = light dark
+    "g":["","",""],                  // sprite id per light, "" = text
+    "s":[0,36,0],                    // max font em size per light, 0 = automatic
+    "c":[48,52,12],                  // circle colours, Rgb2 0bRRGGBB (0 = black); 64 = random, never black
+    "f":[0,0,64],                    // ink colours; 64 = random, never equal to the circle
+    "m":3, "ms":800},                // m = lit mask (derived from k on the device), ms = duration
+   ...],
+ "loops":[{"from":6,"to":10,"count":10},  // loop sections, 1-based inclusive, non-overlapping
+          {"from":12,"to":14,"count":4}]}
 ```
 
-Store: `{"interval":60,"sets":[...]}`. Rotation every `interval` seconds
-(5..86400) when there are ≥2 sets.
+Playback expands the loops into a playlist (`TextSet::playlist()`): frames
+1–5, 6–10 ten times, 11, 12–14 four times, then the next set (a lone set
+starts over). Frames are laid out just in time, the current one plus the
+following one, so a long set costs no extra RAM. Random colours are rolled
+when a frame is prepared (so a looped frame re-rolls every pass) and never
+repeat either of the two previous random picks. A legacy set without
+`frames` loads as one frame. Store: `{"sets":[...]}`, capped at 32 KB of
+JSON (`SetStore::MAX_JSON_BYTES`), 40 sets, 64 frames and 16 loops per set.
 
 ## HTTP API (all on the AP, http://192.168.4.1/)
 
 | Call | Effect |
 | --- | --- |
 | `GET /` | the page |
-| `GET /api/state` | `{interval, current, live, sets, sizes, animations, sprites}` |
+| `GET /api/state` | `{current, frame, live, heap, heapMin, heapBlock, sets, sizes, sprites}` (`frame` = 0-based frame being shown) |
 | `GET /api/check?text=&light=&size=` | `{ok,size,lines,maxFit}` or `{ok:false,error,maxFit}` |
 | `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&m=&k=` | RLE frame (`m` lit mask, `k` elapsed ms for sprite frames) |
 | `GET /api/preview.bmp?...` | same as 4-bpp BMP |
-| `POST /api/sets` (set JSON) | add; 400 with reason if a text does not fit |
+| `POST /api/sets` (set JSON) | add; 400 with reason if a text does not fit or storage is full |
+| `PUT /api/sets/{i}` (set JSON) | replace set i (the page's Edit) |
 | `DELETE /api/sets/{i}` | remove |
 | `POST /api/show/{i}` | show now, restart timer |
-| `POST /api/interval {seconds}` | rotation interval |
-| `POST /api/live` (set JSON) / `DELETE /api/live` | show a draft on the LEDs without saving / back to sets (auto-clears after 60 s idle) |
+| `POST /api/live` (frame JSON: t,k,g,s,c,f,m) / `DELETE /api/live` | show a draft frame on the LEDs without saving / back to sets (auto-clears after 60 s idle) |
 
 RLE format: `'R','L', W u16, H u16, nPal u8, nPal×RGB888, then u16 LE runs
 (index<<12 | length ≤4095)`.
@@ -70,6 +82,7 @@ RLE format: `'R','L', W u16, H u16, nPal u8, nPal×RGB888, then u16 LE runs
 ## Rendering costs (S3, 2 panels)
 
 Full face ≈ 49k `setPixel2` calls (tens of ms); sprite box ≈ 6k. A full redraw
-happens on set change, draft change or lit-mask change (and is written to both
-DMA buffers); sprite frames only repaint their boxes. Refresh itself is DMA
+happens on every keyframe change, set change or draft change (and is written
+to both DMA buffers when double-buffered); sprite frames only repaint their
+boxes. Refresh itself is DMA
 (108 Hz on six panels at 10 MHz, 325 Hz on two).

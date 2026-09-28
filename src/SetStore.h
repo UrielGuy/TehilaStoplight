@@ -1,33 +1,60 @@
 #pragma once
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <vector>
 
-// A "set" is one text per light (top, middle, bottom). Sets rotate on the
-// display every `intervalSec`. Persisted in NVS as JSON.
-struct TextSet {
-  String text[3];
-  uint8_t size[3] = {0, 0, 0};   // max em size per text, 0 = automatic (largest that fits)
-  uint8_t colour[3] = {48, 52, 12};   // circle colours, Rgb2 (0bRRGGBB): red, orange, green
-  uint8_t ink[3] = {0, 0, 0};         // text / figure colour, Rgb2 (default black)
-  String graphic[3];                  // sprite id, empty = show the text
-  String anim = "all";           // Animation id, see Animation.cpp
-  uint16_t unitMs = 1000;        // one animation time unit
+// What one light shows. bg/ink are Rgb2 (0bRRGGBB, 0 = black);
+// COLOUR_RANDOM = pick a random non-black colour each time it is shown.
+static const uint8_t COLOUR_RANDOM = 64;
+
+struct LightDef {
+  String text;
+  String kind = "short";     // "short" | "long" (which text box the page shows) | "off" (light unlit)
+  String graphic;            // sprite id, empty = text
+  uint8_t size = 0;          // max font em size, 0 = automatic
+  uint8_t bg = 0;
+  uint8_t ink = 0;
+  bool on = true;            // false when kind == "off": the light stays dark (dim ring)
 };
+
+struct KeyFrame {
+  LightDef l[3];
+  uint32_t ms = 1000;
+  uint8_t mask() const { return (l[0].on ? 1 : 0) | (l[1].on ? 2 : 0) | (l[2].on ? 4 : 0); }
+};
+
+// A section of frames repeated `count` times (1-based, inclusive, as shown
+// on the page). Sections must not overlap.
+struct Loop { uint16_t from = 1, to = 1, count = 1; };
+
+// A set is a keyframe sequence with optional loop sections; it plays once
+// through (loops expanded), then the sign moves on to the next set.
+struct TextSet {
+  String name;
+  std::vector<KeyFrame> frames;
+  std::vector<Loop> loops;
+  // Frame indices (0-based) in play order, loops expanded.
+  std::vector<uint16_t> playlist() const;
+};
+
+void lightsToJson(JsonObject o, const LightDef l[3]);
+void lightsFromJson(JsonObjectConst o, LightDef l[3]);
+void frameFromJson(JsonObjectConst o, KeyFrame& f);
+void setToJson(JsonObject o, const TextSet& s);
+void setFromJson(JsonObjectConst o, TextSet& s);
 
 class SetStore {
  public:
   static constexpr size_t MAX_SETS = 40;
-  static constexpr size_t MAX_TEXT_BYTES = 720;   // 240 chars of Hebrew in UTF-8
+  static constexpr size_t MAX_FRAMES = 64;
+  static constexpr size_t MAX_LOOPS = 16;
+  static constexpr size_t MAX_TEXT_BYTES = 720;
+  static constexpr size_t MAX_JSON_BYTES = 32000;   // whole store, NVS blob + heap budget
 
   void load();
-  void save();
-
+  bool save();                         // false if over MAX_JSON_BYTES (nothing written)
   std::vector<TextSet>& sets() { return _sets; }
-  uint32_t intervalSec() const { return _intervalSec; }
-  void setIntervalSec(uint32_t s) { _intervalSec = s < 5 ? 5 : s > 86400 ? 86400 : s; }
-
-  String toJson() const;             // {"interval":60,"sets":[{"t":["a","b","c"],"s":[0,36,0],"a":"traffic","p":1000},...]}
+  String toJson() const;
  private:
   std::vector<TextSet> _sets;
-  uint32_t _intervalSec = 60;
 };

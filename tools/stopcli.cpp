@@ -1,7 +1,6 @@
 // Host-side command line around the text engine, used by tools/local_server.py.
 //   stopcli sizes                              -> JSON list of em sizes, largest first
 //   stopcli check <light 0-2> <text> [maxSize] -> JSON {ok,size,lines,maxFit} | {ok:false,error,maxFit}
-//   stopcli anims                              -> JSON list of animations with steps
 //   stopcli sprites                            -> JSON list of graphics
 //   stopcli preview key=value ...              -> BMP on stdout (same bytes as /api/preview.bmp)
 //   stopcli rle key=value ...                  -> RLE stream on stdout (same bytes as /api/preview.rle)
@@ -14,7 +13,6 @@
 #include <string>
 #include "Face.h"
 #include "Preview.h"
-#include "Animation.h"
 
 static std::string jsonEscape(const std::string& s) {
   std::string o;
@@ -33,17 +31,6 @@ int main(int argc, char** argv) {
   if (cmd == "sizes") {
     printf("[");
     for (int i = 0; i < Face::fontSizeCount(); ++i) printf("%s%d", i ? "," : "", Face::fontSize(i));
-    printf("]\n");
-    return 0;
-  }
-  if (cmd == "anims") {
-    printf("[");
-    for (int i = 0; i < animationCount(); ++i) {
-      const Animation& a = animationAt(i);
-      printf("%s{\"id\":\"%s\",\"name\":\"%s\",\"steps\":[", i ? "," : "", a.id, a.name);
-      for (int k = 0; k < a.nSteps; ++k) printf("%s[%d,%d]", k ? "," : "", a.steps[k].mask, a.steps[k].units);
-      printf("]}");
-    }
     printf("]\n");
     return 0;
   }
@@ -80,8 +67,8 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 3; ++i) {
       const std::string n = std::to_string(i);
       specs[i].sprite = Face::spriteById(get("g" + n));
-      if (!specs[i].sprite) { L[i] = Face::layoutFor(i, get("t" + n), atoi(get("s" + n))); specs[i].text = &L[i]; }
-      specs[i].bg = atoi(get("c" + n)) & 63;
+      if (!specs[i].sprite && std::string(get("k" + n)) != "off") { L[i] = Face::layoutFor(i, get("t" + n), atoi(get("s" + n))); specs[i].text = &L[i]; }
+      specs[i].bg = *get("c" + n) ? (atoi(get("c" + n)) & 63) : Face::defaultColour(i);
       specs[i].fg = atoi(get("f" + n)) & 63;
     }
     const uint8_t mask = *get("m") ? (atoi(get("m")) & 7) : 7;

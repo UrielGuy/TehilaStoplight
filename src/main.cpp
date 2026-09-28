@@ -12,6 +12,9 @@ static const char* AP_PASS = "UriNelli";
 
 SnakeDisplay display;
 SetStore store;
+
+// The Arduino loop task (rendering, incl. text layout) gets 16 KB of stack.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 StopLightApp app(display, store);
 WebUI web(app, store);
 
@@ -21,7 +24,12 @@ void setup() {
 
   // Display first: the DMA buffers want contiguous internal RAM.
   SnakeDisplay::Options opt;
-  opt.doubleBuffer = true;
+  opt.clock = HUB75_I2S_CFG::HZ_20M;   // ~200 Hz on six panels; the adapter's short ribbons cope
+  // Single buffer on the six-panel sign: the second 96 KB buffer left only
+  // ~77 KB of heap, and concurrent page traffic then crashed the device
+  // (2026-09-28). Sprite frames repaint only their box, so tearing is not
+  // visible. The two-panel bench keeps double buffering.
+  opt.doubleBuffer = (PANEL_COUNT <= 2);
   if (!display.begin(opt)) {
     Serial.println("Double-buffered init failed, retrying single-buffered");
     opt.doubleBuffer = false;
@@ -40,7 +48,7 @@ void setup() {
   // to the WiFi stack; frame rendering owns core 1 through the Arduino loop.
   xTaskCreatePinnedToCore([](void*) {
     for (;;) { web.loop(); vTaskDelay(pdMS_TO_TICKS(2)); }
-  }, "web", 8192, nullptr, 1, nullptr, 0);
+  }, "web", 16 * 1024, nullptr, 1, nullptr, 0);
 }
 
 void loop() {   // core 1: rendering only

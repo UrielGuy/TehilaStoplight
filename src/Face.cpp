@@ -36,7 +36,7 @@ void draw(Canvas& c, const LightSpec specs[LIGHTS], uint8_t litMask, uint32_t el
   for (int light = 0; light < LIGHTS; ++light) {
     const LightSpec& sp = specs[light];
     const bool lit = (litMask >> light) & 1;
-    Rgb2 base = sp.bg ? sp.bg : defaultColour(light);
+    Rgb2 base = sp.bg;                       // 0 = a black circle (text still shows in its ink)
     Rgb2 ink = sp.fg;
     if (ink == base) ink = (base == RGB2_BLACK) ? rgb2(3, 3, 3) : RGB2_BLACK;   // never invisible
     const Rgb2 colour = lit ? base : rgb2Dim(base);
@@ -63,7 +63,7 @@ void drawSpriteBoxes(Canvas& c, const LightSpec specs[LIGHTS], uint8_t litMask, 
   for (int light = 0; light < LIGHTS; ++light) {
     const LightSpec& sp = specs[light];
     if (!sp.sprite || !((litMask >> light) & 1)) continue;
-    Rgb2 base = sp.bg ? sp.bg : defaultColour(light);
+    Rgb2 base = sp.bg;
     Rgb2 ink = sp.fg;
     if (ink == base) ink = (base == RGB2_BLACK) ? rgb2(3, 3, 3) : RGB2_BLACK;
     const Sprite& s = *sp.sprite;
@@ -82,7 +82,7 @@ void drawSpriteBoxes(Canvas& c, const LightSpec specs[LIGHTS], uint8_t litMask, 
 
 void draw(Canvas& c, const TextLayout* const layouts[LIGHTS], uint8_t litMask, const Rgb2* colours) {
   LightSpec specs[LIGHTS];
-  for (int i = 0; i < LIGHTS; ++i) { specs[i].text = layouts[i]; specs[i].bg = colours ? colours[i] : 0; }
+  for (int i = 0; i < LIGHTS; ++i) { specs[i].text = layouts[i]; specs[i].bg = colours ? colours[i] : defaultColour(i); }
   draw(c, specs, litMask, 0);
 }
 
