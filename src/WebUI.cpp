@@ -4,6 +4,8 @@
 #include "WebPage.h"
 #include "StopLightApp.h"
 #include "Preview.h"
+#include "Mp3Player.h"
+#include <Preferences.h>
 #include <vector>
 
 static const byte DNS_PORT = 53;
@@ -28,12 +30,26 @@ void WebUI::begin(const char* ssid, const char* password) {
   _server.on("/api/preview.rle", HTTP_GET, [this] { handlePreview(true); });
   _server.on("/api/live", HTTP_POST, [this] { handleLive(true); });
   _server.on("/api/live", HTTP_DELETE, [this] { handleLive(false); });
+  _server.on("/api/mp3/stop", HTTP_POST, [this] { if (_mp3) _mp3->stop(); sendState(); });
+  _server.on("/api/mp3/rescan", HTTP_POST, [this] { if (_mp3) _mp3->rescan(); sendState(); });
+  _server.on("/api/mp3/volume", HTTP_POST, [this] {
+    JsonDocument doc;
+    if (deserializeJson(doc, _server.arg("plain")) || !_mp3) { _server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+    int v = doc["volume"] | 20; v = v < 0 ? 0 : v > 30 ? 30 : v;
+    _mp3->setVolume(v);
+    Preferences p; p.begin("stoplight", false); p.putUChar("vol", v); p.end();
+    sendState();
+  });
   _server.on("/api/sets", HTTP_POST, [this] { handleAdd(); });
   _server.onNotFound([this] {
     const String& uri = _server.uri();
     if (uri.startsWith("/api/sets/") && _server.method() == HTTP_DELETE) { handleDelete(); return; }
     if (uri.startsWith("/api/sets/") && _server.method() == HTTP_PUT) { handleAdd(uri.substring(strlen("/api/sets/")).toInt()); return; }
     if (uri.startsWith("/api/show/") && _server.method() == HTTP_POST)   { handleShow();   return; }
+    if (uri.startsWith("/api/mp3/play/") && _server.method() == HTTP_POST) {
+      if (_mp3) _mp3->play(uri.substring(strlen("/api/mp3/play/")).toInt());
+      sendState(); return;
+    }
     if (captiveRedirect()) return;
     _server.send(404, "text/plain", "not found");
   });
@@ -62,6 +78,11 @@ void WebUI::sendState() {
   doc["current"] = _app.current();
   doc["live"] = _app.hasDraft();
   doc["frame"] = _app.frameIndex();
+  JsonObject mp3 = doc["mp3"].to<JsonObject>();
+  mp3["present"] = _mp3 && _mp3->present();
+  mp3["tracks"] = _mp3 ? _mp3->trackCount() : 0;
+  mp3["volume"] = _mp3 ? _mp3->volume() : 0;
+  mp3["error"] = _mp3 ? _mp3->lastError() : "";
   doc["heap"] = ESP.getFreeHeap();
   doc["heapMin"] = ESP.getMinFreeHeap();
   doc["heapBlock"] = ESP.getMaxAllocHeap();

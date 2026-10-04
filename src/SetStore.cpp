@@ -35,6 +35,8 @@ void frameFromJson(JsonObjectConst o, KeyFrame& f) {
     for (int i = 0; i < 3; ++i) f.l[i].on = ((int)o["m"] >> i) & 1;
   uint32_t ms = o["ms"] | 1000;
   f.ms = ms < 100 ? 100 : ms > 600000 ? 600000 : ms;
+  int t = o["mp3"] | 0;
+  f.track = t < -1 ? -1 : t > 3000 ? 3000 : t;
 }
 
 void setToJson(JsonObject o, const TextSet& s) {
@@ -45,6 +47,7 @@ void setToJson(JsonObject o, const TextSet& s) {
     lightsToJson(fo, f.l);
     fo["m"] = f.mask();
     fo["ms"] = f.ms;
+    if (f.track) fo["mp3"] = f.track;
   }
   JsonArray loops = o["loops"].to<JsonArray>();
   for (const Loop& L : s.loops) {

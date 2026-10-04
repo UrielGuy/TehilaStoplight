@@ -50,7 +50,8 @@ li .t em{display:block;font-style:normal;color:var(--muted);font-size:12px}li .t
     <input type="text" id="name" maxlength="40" placeholder="Name this set (optional) · שם" autocomplete="off" style="font-size:16px;margin-bottom:10px">
     <div id="framesBar">
       <div class="frames" id="frames"></div>
-      <div class="row" style="margin-top:4px"><span class="tm">Show this frame for <input type="number" id="frameMs" min="100" max="600000" step="100"> ms</span></div>
+      <div class="row" style="margin-top:4px"><span class="tm">Show this frame for <input type="number" id="frameMs" min="100" max="600000" step="100"> ms</span>
+      <span class="tm">Sound <select id="frameMp3"><option value="0">keep playing</option><option value="-1">stop</option></select><button type="button" class="small" id="mp3Test" title="Play this track now">&#9654;</button></span></div>
       <div class="row" style="margin-top:6px"><button class="small" id="insBefore">+ before</button><button class="small" id="insAfter">+ after</button><button class="small" id="dupFrame">Duplicate</button><button class="small" id="delFrame">Delete frame</button></div>
     </div>
     <div id="loopRow">
@@ -65,6 +66,11 @@ li .t em{display:block;font-style:normal;color:var(--muted);font-size:12px}li .t
   <div class="card preview" id="pvcard"><label class="live"><input type="checkbox" id="live"> Preview while editing (page + LEDs)</label>
     <div id="pvbody"><canvas id="pv" width="128" height="384"></canvas><label class="live small"><input type="checkbox" id="playAll"> play the whole set</label><div class="msg" id="livemsg"></div></div></div>
   <div class="card" style="grid-column:1/-1">
+    <h2>Sound &middot; MP3 module</h2>
+    <div class="row" style="margin-top:0"><span class="msg" id="mp3msg" style="margin:0"></span></div>
+    <div class="row"><span class="tm">Volume <input type="range" id="vol" min="0" max="30" step="1" style="width:160px"> <b id="volv"></b></span><button class="small" id="mp3Stop">Stop sound</button><button class="small" id="mp3Rescan">Rescan card</button></div>
+  </div>
+  <div class="card" style="grid-column:1/-1">
     <h2>Sets on the display</h2>
     <ul id="list"></ul>
   </div>
@@ -77,7 +83,11 @@ let SIZES=[],SPRITES=[],state={sets:[],current:0};
 const css=c=>c===RND?'':`rgb(${LV[(c>>4)&3]},${LV[(c>>2)&3]},${LV[c&3]})`;
 const recent=[0,0];const rnd=avoid=>{let c;for(let t=0;t<32;t++){c=1+Math.floor(Math.random()*63);if(c!==avoid&&c!==recent[0]&&c!==recent[1])break}recent[1]=recent[0];recent[0]=c;return c};
 const newLight=i=>({k:'short',t:'',s:0,c:DEFC[i],f:0});
-const newFrame=()=>({lights:[0,1,2].map(newLight),ms:1000});
+const newFrame=()=>({lights:[0,1,2].map(newLight),ms:1000,mp3:0});
+let MP3={present:false,tracks:0,volume:20};
+function mp3Options(){const sel=$('frameMp3'),cur=ed.frames[ed.cur].mp3||0;sel.innerHTML='<option value="0">keep playing</option><option value="-1">stop</option>';
+ const n=Math.max(MP3.tracks,cur>0?cur:0);for(let i=1;i<=n;i++){const o=document.createElement('option');o.value=i;o.textContent='track '+String(i).padStart(3,'0')+'.mp3';sel.appendChild(o)}
+ if(cur>0&&cur>MP3.tracks){sel.options[sel.options.length-1].textContent+=' (not on card)'}sel.value=String(cur);$('mp3Test').disabled=!(cur>0)}
 const MAXF=64;
 let ed={name:'',frames:[newFrame()],cur:0,loops:[],editing:null};
 try{const s=JSON.parse(localStorage.getItem('stoplight.editor')||'null');if(s&&s.frames&&s.frames.length)ed={...ed,name:s.name||'',frames:s.frames,cur:Math.min(s.cur||0,s.frames.length-1),loops:s.loops||[]}}catch(e){}
@@ -105,7 +115,7 @@ function buildLights(){const L=cur(),host=$('lights');host.innerHTML='';
   swatchUI(i);showBoxes(i)});
  {const fb=$('frames');fb.innerHTML='';ed.frames.forEach((f,i)=>{const b=document.createElement('button');b.type='button';b.className='small'+(i===ed.cur?' cur':'');b.textContent=(i+1);b.onclick=()=>{ed.cur=i;persist();buildLights();refit()};fb.appendChild(b)});
   const add=document.createElement('button');add.type='button';add.className='small';add.textContent='+ at end';add.disabled=ed.frames.length>=MAXF;add.onclick=()=>insertFrame(ed.frames.length);fb.appendChild(add);
-  $('frameMs').value=ed.frames[ed.cur].ms;buildLoops()}
+  $('frameMs').value=ed.frames[ed.cur].ms;mp3Options();buildLoops()}
  $('name').value=ed.name||'';$('add').textContent=ed.editing===null?'Add set':'Save changes';$('addNew').classList.toggle('hide',ed.editing===null);$('cancel').classList.toggle('hide',ed.editing===null);$('edTitle').textContent=ed.editing===null?'New set · סט חדש':'Editing set '+(ed.editing+1)+(ed.name?' · '+ed.name:'')}
 function showBoxes(i){const l=cur()[i],g=l.k!=='short'&&l.k!=='long';$('t'+i).classList.toggle('hide',l.k!=='short');$('l'+i).classList.toggle('hide',l.k!=='long');$('szrow'+i).classList.toggle('hide',g);$('off'+i).classList.toggle('on',l.k==='off')}
 function swatchUI(i){const l=cur()[i];const sw=$('sw'+i),fw=$('fw'+i);sw.classList.toggle('rnd',l.c===RND);fw.classList.toggle('rnd',l.f===RND);sw.style.setProperty('--c',css(l.c));fw.style.setProperty('--c',css(l.f))}
@@ -140,6 +150,12 @@ function buildLoops(){const host=$('loops');host.innerHTML='';const errs=loopErr
  $('loopmsg').textContent=ed.loops.length?'':'Without loops the frames play once, then the next set starts.';update()}
 $('addLoop').onclick=()=>{if(ed.loops.length>=16)return;const n=ed.frames.length;ed.loops.push({from:Math.min(ed.cur+1,n),to:n,count:2});persist();buildLoops();preview()};
 $('frameMs').onchange=()=>{ed.frames[ed.cur].ms=+$('frameMs').value||1000;persist();preview()};
+$('frameMp3').onchange=()=>{ed.frames[ed.cur].mp3=+$('frameMp3').value||0;persist();mp3Options()};
+$('mp3Test').onclick=()=>{const t=ed.frames[ed.cur].mp3;if(t>0)fetch('/api/mp3/play/'+t,{method:'POST'}).then(r=>r.json()).then(render).catch(()=>{})};
+$('mp3Stop').onclick=()=>fetch('/api/mp3/stop',{method:'POST'}).then(r=>r.json()).then(render).catch(()=>{});
+$('mp3Rescan').onclick=()=>fetch('/api/mp3/rescan',{method:'POST'}).then(r=>r.json()).then(render).catch(()=>{});
+$('vol').oninput=()=>{$('volv').textContent=$('vol').value};
+$('vol').onchange=()=>fetch('/api/mp3/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:+$('vol').value})}).then(r=>r.json()).then(render).catch(()=>{});
 // Insert a blank frame at `at`; loop sections at or beyond it shift to keep pointing at the same frames.
 function insertFrame(at,copy){if(ed.frames.length>=MAXF)return;ed.frames.splice(at,0,copy?JSON.parse(JSON.stringify(ed.frames[ed.cur])):newFrame());
  ed.loops.forEach(L=>{if(L.from>at)L.from++;if(L.to>=at+1&&L.to>=L.from)L.to++;if(L.from>at&&L.to<L.from)L.to=L.from});ed.cur=at;persist();buildLights();refit()}
@@ -153,7 +169,7 @@ $('name').addEventListener('input',()=>{ed.name=$('name').value;persist()});
 const isText=l=>l.k==='short'||l.k==='long';
 function lightsJson(L){return{t:L.map(l=>isText(l)?l.t.trim():''),k:L.map(l=>l.k==='long'?'long':l.k==='off'?'off':'short'),g:L.map(l=>(isText(l)||l.k==='off')?'':l.k),s:L.map(l=>l.s),c:L.map(l=>l.c),f:L.map(l=>l.f)}}
 const maskOf=L=>L.reduce((m,l,i)=>m|(l.k!=='off'?1<<i:0),0);
-function setJson(){const name=(ed.name||'').trim().slice(0,40);return{name,frames:ed.frames.map(f=>({...lightsJson(f.lights),m:maskOf(f.lights),ms:f.ms})),loops:ed.loops.map(L=>({from:L.from,to:L.to,count:L.count}))}}
+function setJson(){const name=(ed.name||'').trim().slice(0,40);return{name,frames:ed.frames.map(f=>({...lightsJson(f.lights),m:maskOf(f.lights),ms:f.ms,mp3:f.mp3||0})),loops:ed.loops.map(L=>({from:L.from,to:L.to,count:L.count}))}}
 function playlist(frames,loops){const out=[],n=frames.length;let i=0;while(i<n&&out.length<400){const L=loops.find(x=>x.from-1===i&&x.to<=n&&x.to>=x.from);if(L){for(let c=0;c<L.count&&out.length<400;c++)for(let k=i;k<L.to;k++)out.push(k);i=L.to}else{out.push(i);i++}}return out}
 function draftJson(){const L=cur();return{...lightsJson(L),m:maskOf(L)}}
 
@@ -201,11 +217,13 @@ $('add').onclick=()=>submit(false);$('addNew').onclick=()=>submit(true);
 function resetEditor(){ed={name:'',frames:[newFrame()],cur:0,loops:[],editing:null};persist();buildLights();refit()}
 $('clear').onclick=resetEditor;$('cancel').onclick=resetEditor;
 function loadSet(i){const s=state.sets[i];if(!s)return;const fromJ=(o,pos)=>({k:(o.g&&o.g[pos])?o.g[pos]:((o.k&&o.k[pos])||'short'),t:(o.t&&o.t[pos])||'',s:(o.s&&o.s[pos])||0,c:(o.c&&o.c[pos]!==undefined)?o.c[pos]:DEFC[pos],f:(o.f&&o.f[pos])||0});
- ed={name:s.name||'',frames:s.frames.map(f=>({lights:[0,1,2].map(p=>fromJ(f,p)),ms:f.ms||1000})),cur:0,loops:(s.loops||[]).map(L=>({from:L.from,to:L.to,count:L.count})),editing:i};
+ ed={name:s.name||'',frames:s.frames.map(f=>({lights:[0,1,2].map(p=>fromJ(f,p)),ms:f.ms||1000,mp3:f.mp3||0})),cur:0,loops:(s.loops||[]).map(L=>({from:L.from,to:L.to,count:L.count})),editing:i};
  persist();buildLights();refit();window.scrollTo({top:0,behavior:'smooth'})}
 let lastState='';
 async function load(){const s=await fetch('/api/state').then(r=>r.json()).catch(()=>null);if(!s)return;const key=JSON.stringify([s.sets,s.current,s.live]);if(key===lastState)return;lastState=key;render(s)}
 function render(s){state=s;$('livemsg').textContent=s.live?'showing your draft on the LEDs':'';
+ if(s.mp3){MP3=s.mp3;$('mp3msg').textContent=MP3.present?`${MP3.tracks} track${MP3.tracks===1?'':'s'} on the card (001.mp3 … ${String(MP3.tracks).padStart(3,'0')}.mp3, in the order they were copied)`+(MP3.error?' · '+MP3.error:''):'No MP3 module answering (check wiring, card, power)';
+  if(document.activeElement!==$('vol')){$('vol').value=MP3.volume;$('volv').textContent=MP3.volume}if($('frameMp3'))mp3Options()}
  let first=!SIZES.length;if(s.sizes)SIZES=s.sizes;if(s.sprites)SPRITES=s.sprites;
  if(first){buildLights();refit()}
  const ul=$('list');ul.innerHTML='';
@@ -215,7 +233,7 @@ function render(s){state=s;$('livemsg').textContent=s.live?'showing your draft o
   li.innerHTML=`<span class="n">${i+1}</span><span class="t"><strong class="nm"></strong><span style="--c:${css(cols[0])||'#888'}" dir="auto"></span><span style="--c:${css(cols[1])||'#888'}" dir="auto"></span><span style="--c:${css(cols[2])||'#888'}" dir="auto"></span><em></em></span><span class="acts"><button class="small" data-edit="${i}">Edit</button><button class="small" data-show="${i}">Show now</button><button class="small" data-del="${i}">Delete</button></span>`;
   li.querySelector('.nm').textContent=set.name||'';li.querySelector('.nm').classList.toggle('hide',!set.name);
   li.querySelectorAll('.t span').forEach((el,k)=>{const g=(src.g||[])[k];const off=(src.k||[])[k]==='off';el.textContent=off?'[off]':g?'['+((SPRITES.find(x=>x.id===g)||{}).name||g)+']':((src.t||[])[k]||'');const sz=(src.s||[])[k];if(sz){const m=document.createElement('small');m.textContent='max '+sz;el.appendChild(m)}});
-  const em=li.querySelector('em'),pl=playlist(set.frames,set.loops||[]),total=pl.reduce((a,fi)=>a+((set.frames[fi]||{}).ms||1000),0);em.textContent=`${set.frames.length} frame${set.frames.length>1?'s':''}${(set.loops||[]).length?', '+set.loops.map(L=>`${L.from}–${L.to} ×${L.count}`).join(', '):''} · ${(total/1000).toFixed(1)} s per play`;
+  const em=li.querySelector('em'),pl=playlist(set.frames,set.loops||[]),total=pl.reduce((a,fi)=>a+((set.frames[fi]||{}).ms||1000),0),snd=set.frames.filter(f=>f.mp3>0).length;em.textContent=`${set.frames.length} frame${set.frames.length>1?'s':''}${(set.loops||[]).length?', '+set.loops.map(L=>`${L.from}–${L.to} ×${L.count}`).join(', '):''} · ${(total/1000).toFixed(1)} s per play${snd?' · '+snd+' with sound':''}`;
   ul.appendChild(li)});
  ul.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>loadSet(+b.dataset.edit));
  ul.querySelectorAll('[data-show]').forEach(b=>b.onclick=async()=>render(await fetch('/api/show/'+b.dataset.show,{method:'POST'}).then(r=>r.json())));

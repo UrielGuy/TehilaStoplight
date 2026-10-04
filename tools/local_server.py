@@ -61,7 +61,8 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _state(self):
-        self._json({"current": state["current"], "live": state.get("live", False), "sets": state["sets"], "sizes": sizes(), "sprites": sprites()})
+        self._json({"current": state["current"], "live": state.get("live", False), "sets": state["sets"], "sizes": sizes(), "sprites": sprites(),
+                    "mp3": {"present": True, "tracks": 5, "volume": state.get("volume", 20), "error": ""}})   # a pretend module with five tracks
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
@@ -157,6 +158,11 @@ class H(BaseHTTPRequestHandler):
             if 0 <= i < len(state["sets"]):
                 state["current"] = i
                 print(f"[display] now showing set {i + 1}")
+            self._state()
+        elif u.path.startswith("/api/mp3/"):
+            if u.path == "/api/mp3/volume":
+                state["volume"] = int(self._body().get("volume", 20)); save(state)
+            print(f"[mp3] {u.path}")
             self._state()
         elif u.path == "/api/live":
             b = self._body()

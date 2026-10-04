@@ -20,6 +20,7 @@ struct LightDef {
 struct KeyFrame {
   LightDef l[3];
   uint32_t ms = 1000;
+  int16_t track = 0;          // audio when the frame starts: 0 = leave as is, -1 = stop, n = play track n
   uint8_t mask() const { return (l[0].on ? 1 : 0) | (l[1].on ? 2 : 0) | (l[2].on ? 4 : 0); }
 };
 

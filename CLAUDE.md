@@ -42,6 +42,15 @@ real address). Commit only when the user asks.
 - The page keeps the editor draft in localStorage (`stoplight.editor`); a
   headless check is `msedge.exe --headless=new --dump-dom http://localhost:8080/`
   against the harness (see docs/ARCHITECTURE.md for the data model).
+- Sound: a DIYables "MP3 Player Module" (3.5 mm jack, microSD) on UART1,
+  GPIO 12 (ESP32 TX → module RX) / GPIO 13 (ESP32 RX ← module TX), module
+  powered from a separate 5 V supply; every frame can start a track or stop
+  sound (`mp3` in the frame JSON), global volume in NVS. 10-byte checksummed
+  frames (`Mp3Player.cpp`); the chip only reports the file count, never
+  names; tracks are 1-based in copy order. Firmware runs without the module.
+  Verified 2026-10-04: file count 3 reported, track playback heard. The
+  `s3-mp3test` env is a console-driven bring-up build (commands l q r p s v
+  x w 8 9 b, see main.cpp) worth keeping for the next hardware problem.
 - Not done: uploading images/GIFs from the page (design agreed, see TODO).
 
 ## Build, flash, monitor (from WSL)

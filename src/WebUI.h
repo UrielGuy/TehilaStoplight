@@ -10,6 +10,7 @@ class StopLightApp;   // owns display + store + rotation
 class WebUI {
  public:
   WebUI(StopLightApp& app, SetStore& store) : _app(app), _store(store), _server(80) {}
+  void setMp3(class Mp3Player* m) { _mp3 = m; }
   void begin(const char* ssid, const char* password);
   void loop();
  private:
@@ -28,4 +29,5 @@ class WebUI {
   WebServer _server;
   DNSServer _dns;
   class BitmapCanvas* _canvas = nullptr;   // preview scratch, allocated once in begin()
+  class Mp3Player* _mp3 = nullptr;
 };

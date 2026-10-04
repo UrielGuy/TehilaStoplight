@@ -4,6 +4,7 @@
 #include "SnakeDisplay.h"
 #include "SetStore.h"
 #include "Face.h"
+#include "Mp3Player.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -12,6 +13,7 @@
 class StopLightApp {
  public:
   StopLightApp(SnakeDisplay& d, SetStore& s) : _display(d), _store(s) {}
+  void setMp3(Mp3Player* m) { _mp3 = m; }
   int current() const { return _current; }
   int frameIndex() const { return _pos < (int)_playlist.size() ? _playlist[_pos] : 0; }
   void showSet(int index);            // renders immediately, restarts timers
@@ -35,8 +37,10 @@ class StopLightApp {
     Face::LightSpec specs[Face::LIGHTS];
     uint8_t mask = 7;
     uint32_t ms = 1000;
+    int16_t track = 0;
     int pos = -1;                     // playlist position it was prepared for
   };
+  void startAudio(const Prepared& p);
   void startSet();                                  // build the playlist, prepare frame 0
   void prepareFrame(Prepared& p, const LightDef l[3], uint8_t mask, uint32_t ms);
   void preparePos(Prepared& p, int pos);            // frame at playlist position
@@ -47,6 +51,7 @@ class StopLightApp {
 
   SnakeDisplay& _display;
   SetStore& _store;
+  Mp3Player* _mp3 = nullptr;
   SemaphoreHandle_t _lock = xSemaphoreCreateRecursiveMutex();
 
   int _current = 0;

@@ -49,6 +49,33 @@ firmware therefore flips the parity (`FIRST_PANEL_FLIPPED_DEFAULT=1`, the
 default; the `s3-2` bench env sets 0). Symptom before the fix, 2026-09-28: the
 two halves of each circle swapped and the lights in reverse order.
 
+## MP3 module (DIYables "MP3 Player Module", YX5300-type serial player)
+
+diyables.io/products/mp3-player-module: four pins (VCC, GND, RX, TX), microSD
+on the back, a **3.5 mm jack** for the audio (so it needs a powered speaker
+or a small amplifier, not a bare speaker), 3.2–5.2 V, 9600 baud, MP3 and WAV.
+Wired to UART1: module **RX ← GPIO 12** (ESP32 TX; a 1 kΩ series resistor is
+harmless but not required at 3.3 V), module **TX → GPIO 13** (ESP32 RX),
+GND → GND, VCC from a **proper 5 V supply** (the DevKit's 5V pin sagged to
+1.7 V under the module on this sign: it only passes USB power through a
+diode). On the ESP32-S3-DevKitC-1 (USB connectors at the bottom) pins 12, 13,
+5V and GND are the bottom of the **left** header, which reads … 11, 12, 13,
+14, 5V, GND from the top. Bring-up 2026-10-04: the module first looked like
+it echoed every command (an unpowered chip passes the signal RX→TX through
+its protection diodes), then answered once powered and once the pin roles
+were swapped to the above; it replied to 0x48 with 3 files in a 10-byte
+checksummed frame. The DevKit's pins are reachable
+only at their tops once it sits in the adapter. 12/13 are free on the S3 and
+are not strapping/flash pins (`Mp3Pins` in `PanelPins.h`).
+
+Protocol: the module accepts both the 8-byte `7E FF 06 CMD FB HI LO EF`
+frame and the 10-byte one with a checksum, and replies with 10-byte
+checksummed frames; the firmware sends 10-byte frames. 0x03 play track, 0x16 stop, 0x06 volume 0–30, 0x09/0x02 select the
+card, 0x0C reset, 0x48 query the file count (reply 0x48 with the count),
+0x3F sent by the module when the card is read. Tracks are numbered from 1 in
+**copy order**, names are never reported. The firmware runs without the
+module (the page says "No MP3 module answering").
+
 ## Serial / flashing
 
 - S3 UART socket = CH343, was COM14. Native USB socket = "USB Serial Device",

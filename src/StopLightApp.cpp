@@ -15,6 +15,7 @@ Rgb2 StopLightApp::randomColour(Rgb2 avoid) {
 }
 
 void StopLightApp::prepareFrame(Prepared& p, const LightDef l[3], uint8_t mask, uint32_t ms) {
+  p.track = 0;
   for (int i = 0; i < Face::LIGHTS; ++i) {
     p.layouts[i] = TextLayout();
     p.specs[i] = Face::LightSpec();
@@ -39,7 +40,15 @@ void StopLightApp::preparePos(Prepared& p, int pos) {
   }
   const KeyFrame& f = sets[_current].frames[_playlist[pos]];
   prepareFrame(p, f.l, f.mask(), f.ms);
+  p.track = f.track;
   p.pos = pos;
+}
+
+// Audio tied to a frame: play its track or stop, when the frame starts.
+void StopLightApp::startAudio(const Prepared& p) {
+  if (!_mp3 || _draftActive) return;
+  if (p.track > 0) _mp3->play(p.track);
+  else if (p.track < 0) _mp3->stop();
 }
 
 void StopLightApp::startSet() {
@@ -76,6 +85,7 @@ void StopLightApp::renderCurrent() {
   xSemaphoreTakeRecursive(_lock, portMAX_DELAY);
   startSet();
   render(*_cur, 0);
+  startAudio(*_cur);
   _lastKey = frameKey(*_cur, 0);
   xSemaphoreGiveRecursive(_lock);
 }
@@ -141,6 +151,7 @@ void StopLightApp::loop() {
       else preparePos(*_cur, _pos);
       _next->pos = -1;
       render(*_cur, 0);
+      startAudio(*_cur);
       _lastKey = frameKey(*_cur, 0);
       xSemaphoreGiveRecursive(_lock);
       return;

@@ -28,7 +28,8 @@ web page (phone)  --JSON/RLE-->  WebUI (core 0)  --sets, drafts-->  SetStore (NV
 | `Preview.*` | `BitmapCanvas` (4 bpp, per-image palette ≤16) → BMP (tools) or RLE stream (page). | yes |
 | `DisplayCanvas.h` | Canvas → SnakeDisplay. | no |
 | `SetStore.*` | `TextSet` + JSON persistence in NVS (`Preferences`, blob "sets"). | no |
-| `StopLightApp.*` | Plays keyframe sets through the expanded playlist, prepares frames just in time (two slots), sprite timing, live draft, recursive mutex held for the whole render pass, full vs sprite-box renders. | no |
+| `StopLightApp.*` | Plays keyframe sets through the expanded playlist, prepares frames just in time (two slots), sprite timing, live draft, recursive mutex held for the whole render pass, full vs sprite-box renders; starts a frame's audio via `Mp3Player`. | no |
+| `Mp3Player.*` | YX5200/DFPlayer serial driver on UART1 (play, stop, volume, file count, start-up sequence, reply parsing); polled from the render loop. | no |
 | `WebUI.*`, `WebPage.h` | SoftAP + captive DNS + HTTP API + the single-page UI (PROGMEM, self-contained, no external assets). | no |
 | `main.cpp` | Display init, store, app, AP; web task on core 0, render loop on core 1. | no |
 
@@ -46,7 +47,8 @@ Light arrays are always indexed top, middle, bottom.
     "s":[0,36,0],                    // max font em size per light, 0 = automatic
     "c":[48,52,12],                  // circle colours, Rgb2 0bRRGGBB (0 = black); 64 = random, never black
     "f":[0,0,64],                    // ink colours; 64 = random, never equal to the circle
-    "m":3, "ms":800},                // m = lit mask (derived from k on the device), ms = duration
+    "m":3, "ms":800, "mp3":2},       // m = lit mask (derived from k on the device), ms = duration,
+                                      // mp3: 0 = leave sound as is, -1 = stop, n = play track n when the frame starts
    ...],
  "loops":[{"from":6,"to":10,"count":10},  // loop sections, 1-based inclusive, non-overlapping
           {"from":12,"to":14,"count":4}]}
@@ -75,6 +77,7 @@ JSON (`SetStore::MAX_JSON_BYTES`), 40 sets, 64 frames and 16 loops per set.
 | `DELETE /api/sets/{i}` | remove |
 | `POST /api/show/{i}` | show now, restart timer |
 | `POST /api/live` (frame JSON: t,k,g,s,c,f,m) / `DELETE /api/live` | show a draft frame on the LEDs without saving / back to sets (auto-clears after 60 s idle) |
+| `POST /api/mp3/play/{n}`, `POST /api/mp3/stop`, `POST /api/mp3/volume {volume}`, `POST /api/mp3/rescan` | sound module; state carries `mp3:{present,tracks,volume,error}` |
 
 RLE format: `'R','L', W u16, H u16, nPal u8, nPal×RGB888, then u16 LE runs
 (index<<12 | length ≤4095)`.
