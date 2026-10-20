@@ -10,7 +10,9 @@ static const uint8_t COLOUR_RANDOM = 64;
 struct LightDef {
   String text;
   String kind = "short";     // "short" | "long" (which text box the page shows) | "off" (light unlit)
-  String graphic;            // sprite id, empty = text
+  String graphic;            // sprite id, "u:<id>" = uploaded animation, empty = text
+  uint8_t gmode = 0;
+  uint32_t aFrom = 0, aLen = 0;  // uploaded animation: play only [aFrom, aFrom+aLen) ms, aLen 0 = to the end         // uploaded animation: 0 original colours, 1 silhouette (ink on circle colour), 2 inverted
   uint8_t size = 0;          // max font em size, 0 = automatic
   uint8_t bg = 0;
   uint8_t ink = 0;
@@ -20,7 +22,8 @@ struct LightDef {
 struct KeyFrame {
   LightDef l[3];
   uint32_t ms = 1000;
-  int16_t track = 0;          // audio when the frame starts: 0 = leave as is, -1 = stop, n = play track n
+  int16_t track = 0;          // audio when the frame starts: 0 = leave as is, -1 = stop, -2 = fade out, n = play track n
+  uint16_t fadeMs = 3000;     // fade-out length when track == -2
   uint8_t mask() const { return (l[0].on ? 1 : 0) | (l[1].on ? 2 : 0) | (l[2].on ? 4 : 0); }
 };
 

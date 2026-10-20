@@ -44,14 +44,175 @@ real address). Commit only when the user asks.
   against the harness (see docs/ARCHITECTURE.md for the data model).
 - Sound: a DIYables "MP3 Player Module" (3.5 mm jack, microSD) on UART1,
   GPIO 12 (ESP32 TX → module RX) / GPIO 13 (ESP32 RX ← module TX), module
-  powered from a separate 5 V supply; every frame can start a track or stop
-  sound (`mp3` in the frame JSON), global volume in NVS. 10-byte checksummed
+  powered from a separate 5 V supply; every frame can start a track, stop
+  sound, or fade it out over N seconds (`mp3`/`fade` in the frame JSON; a
+  new track mid-fade restores the saved volume), global volume in NVS and on
+  the page's top card. 10-byte checksummed
   frames (`Mp3Player.cpp`); the chip only reports the file count, never
   names; tracks are 1-based in copy order. Firmware runs without the module.
   Verified 2026-10-04: file count 3 reported, track playback heard. The
   `s3-mp3test` env is a console-driven bring-up build (commands l q r p s v
   x w 8 9 b, see main.cpp) worth keeping for the next hardware problem.
-- Not done: uploading images/GIFs from the page (design agreed, see TODO).
+- Global setting "Unlit lights" on the page's top card: dim outline ring
+  (default) or completely off (`/api/settings {offDark}`, NVS `offdark`,
+  `Face::setOffDark`; the harness and `stopcli` take `o=1`), and
+  "Orientation" normal / rotated 180° (`rotate180`, NVS `rot180`, default
+  **true**: on 2026-10-19 the whole image showed upside down, so the canvas
+  is rotated in `SnakeDisplay::mapToChain`; switch it on the page rather
+  than touching `FIRST_PANEL_FLIPPED`), and "Panel colour wiring"
+  standard / shifted (`colourRotated`, NVS `colrot`, default **true** since
+  2026-10-19 when red showed blue and green showed red: the pin table in
+  `PanelPins.h` stays the maker's, `SnakeDisplay::begin` shifts R/G/B pins
+  for the other panel batch; changing it restarts the sign). The page
+  reads all three from `settings` in `/api/state`.
+- Uploaded animations (2026-10-19): `tools/anim_studio.py` (Windows Python,
+  http://localhost:8090/) opens a GIF, a video or a YouTube link (yt-dlp,
+  only the first 60 s, video only, at most 480p by the shorter side so
+  portrait Shorts keep 480 px across; `--download-seconds` and
+  `--download-res` on the CLI. Since 2026-10-20 `_fetch_start` fetches just
+  the start of the file with range requests sized from its bitrate and cuts
+  the minute out by stream copy: 3.7 s instead of 37 s for Big Buck Bunny.
+  yt-dlp's own range cut goes through ffmpeg, which reads one long stream
+  that YouTube paces at ~2x playback speed whatever the resolution, and
+  `force_keyframes_at_cuts` re-encoded it on top; that path is now only the
+  fallback for formats without range support. yt-dlp
+  needs a binary literally named ffmpeg.exe on PATH, so `ffmpeg_dir()`
+  copies imageio's into the git-ignored `tools/gfx/bin/`),
+  crop box + in/out times, converts with `tools/anim_convert.py` (also a
+  CLI: `--crop x,y,w,h` fractions, `--start/--duration`, `--shape
+  circle|full`, `--upload`), previews, and uploads to the sign. Format in
+  `src/AnimStore.h` (RLE, 1 byte/pixel = Rgb2 + silhouette bit). The sign
+  keeps them in LittleFS (`/a/<id>.anm`, 4.7 MB) and plays them per light
+  (`g` = `u:<id>`, 128×128 clipped to the circle) or over the whole sign
+  (a 128×384 file on any light replaces the face). Per use: `gm` 0 original
+  colours / 1 silhouette in the light's ink on its circle colour / 2
+  inverted, `af`/`al` play only that ms window. The page has an
+  "Your animations" card (upload .anm, delete) and paints them into the
+  preview client-side. Needs pip packages on Windows Python: yt-dlp,
+  imageio-ffmpeg, numpy, Pillow, websocket-client (for ui_flow).
+- Uploads also work over the USB cable, on either socket (`src/SerialLink.*`,
+  "#ANIM" line protocol documented in its header: packets of ≤2 KB with
+  offset + CRC32, the board answers ACK/NAK/POS with its position and the PC
+  resends from there). The native USB link loses a byte or a reply now and
+  then, so do not simplify this to a plain stream. The studio lists sign ports
+  by USB id (303A native, 1A86 CH343) next to WiFi; the CLI takes
+  `--upload usb` or `--upload COM19`. Ports are opened with DTR/RTS low so
+  the board does not reset. Measured 2026-10-19: 418 KB in 12–18 s over the
+  native socket. `USBSerial` must keep `setTxTimeoutMs(50)` (0 silently
+  drops replies when the driver lock is busy) and `setDebugOutput(false)`
+  (otherwise the ESP log also goes to that socket).
+- Animation files are **format 3** since 2026-10-19 evening: a context-model
+  binary arithmetic coder over the 7-bit pixels (`src/AnimV3.*`, encoder
+  `tools/anim_v3.py`, browser decoder `tools/anim_v3.js` pasted into
+  `WebPage.h` and `anim_studio.py`; all three must stay in step, the header's
+  `priorBytes` = 7449 guards the model layout). 32% smaller than format 2 on
+  the user's eight clips (deflate variants with bigger windows, frame groups,
+  palettes, PNG filters, deltas all stayed within 10%: the clips are 4x4
+  Bayer-dithered, see `tools/anim_codec_lab.py` for the table). Whole-sign
+  clips have independent frames (K=1); one-light clips use temporal frames
+  with keyframes every 8. Formats 1 and 2 still play (synchronously, on the
+  render core). The converter keeps format 2 when it is smaller (tiny clips:
+  the format 3 model costs 7.4 KB per file).
+  **Masked clips** (2026-10-20, header flag bit 1, the default for every
+  128-wide clip of 128-row tiles): only the pixels inside each light's
+  circle plus a 2 px margin (diameter 132, `maskSpan` / `mask_array`) are
+  coded; the rest decodes as black because the sign's cover hides it (also
+  the strips between the circles of a whole-sign clip). Hidden pixels carry
+  the context flags tf 0 / sf 2. Blacking the corners without skipping them
+  saved only 4% and grew some clips (the circle edge costs bits); skipping
+  saved 11% on the user's clips (whole-sign clips 9-17%, static one-light
+  video clips ~1%). All eight clips on the board were replaced with masked
+  versions that day (backup in `tools/gfx/backup/20261020-144643`, test
+  vectors in `.pio/v3m`). `anim_recompress.py` treats unmasked format 3 as
+  old and re-encodes it.
+  **Decoding format 3 is slow on the ESP32**: ~95 ms of CPU per whole-sign
+  frame (~80 cycles per coding decision is the going rate for this CPU; -O2,
+  IRAM and register-resident coder state only bought 20%), more than the
+  83 ms frame period. So format 3 frames are decoded by two background
+  tasks (one per core, `AnimStore::beginDecoders`, 17.5 KB `V3Scratch` each
+  in internal RAM) into a ring of three PSRAM frame buffers per clip slot
+  (`V3Slot`, three slots, state in PSRAM), up to two frames ahead of the
+  play position; the render core only copies a ready frame (`paintV3`) and
+  `drawFrame` returns false while a frame is still decoding (the app then
+  keeps `_lastKey` invalid and retries next loop). Measured: 12.0 fps with
+  no skipped or late frames for whole-sign alone, three one-light clips at
+  once, and mixed. Diagnostics over the cable: `#ANIM PERF` (decode times,
+  playback counters, render/decoder stage markers, heap, boot heap
+  samples), `#ANIM BENCH <id> <frame>`, `#ANIM PLAY a,b,c` / `STOP`.
+  PSRAM: `board_build.arduino.memory_type = qio_opi` + `-DBOARD_HAS_PSRAM`
+  (8 MB embedded, works); idle internal heap ~70 KB.
+  `tools/anim_recompress.py [usb|COMx|http://...] [--dry-run]` backs up the
+  board's files to `tools/gfx/backup/<time>/`, re-encodes older formats,
+  checks the pixels match, and uploads them back under the same names
+  (serial read-back via `#ANIM GET`, ~7.5 KB/s; needs the 4 KB `USBSerial`
+  TX buffer). Verified copies of the user's clips from 2026-10-19 are in
+  `.pio/samples` (format 2) and `.pio/v3`.
+- Storage view: the sign's page lists each animation's size and share of
+  the 4.7 MB with a usage bar (`animTotal` next to `animFree` in
+  `/api/state`); the studio has an "On the sign" card (stacked bar per
+  animation, the converted clip striped, whether it fits) fed by
+  `ac.sign_list`, which returns `free`/`total` over WiFi (`/api/anims`) and
+  over the cable (`#ANIM SPACE`). The serial reply readers skip stale replies
+  to earlier commands: on the native USB link a retried GET left extra BLK
+  lines queued that the next PUT took as its answer (2026-10-20).
+- Backups: `tools/anim_backup.py [usb|COMx|http://...] [--to DIR]` copies
+  every animation to `tools/gfx/backup/<time>/` with an index.json of
+  CRC32s; `--restore DIR [sign] [--replace]` uploads such a folder to a sign
+  and skips names it already has. Written 2026-10-20, not yet run end to
+  end. Its read-back `ac.fetch_serial` keeps three GETs in flight and sends
+  a POS when replies pause: one GET at a time, the replies lagged one behind
+  (the native socket held the board's last reply back until it sent more),
+  which is most of what looked like lost replies. 30 KB/s instead of 7.5
+  (car-race, byte-identical); `anim_recompress.py` still reads one at a time.
+- Uploads that replace a clip which would not fit next to its old copy
+  delete the old copy at the start (PUT / HTTP `size=`): writing into a
+  full LittleFS stalled the board for ~30 s. The first PUT after boot on a
+  nearly full file system can also take seconds (the PC waits 25 s).
+- The studio shows progress bars (download, preview preparation, frame
+  decoding, colour conversion, upload) by polling `/api/progress?t=<token>`;
+  the CLI prints the same as a progress line. The studio can rotate the
+  source (90/180/270, ffmpeg transpose before the crop; the preview video is
+  remade turned so the crop box matches). `--port N` runs a second studio
+  (the user often has one open on 8090: never kill it).
+- Naming: the studio's Convert writes `tools/gfx/work/<source id>.anm`;
+  the name is chosen in the upload card. Before uploading it lists the
+  sign's animations (`ac.sign_list`, WiFi or cable) and asks before
+  replacing one with the same name; after an upload a copy is kept as
+  `tools/gfx/<name>.anm`. The sign's page also asks before replacing, and
+  has Rename per animation (`POST /api/anims/<id>/rename {name}`: refuses a
+  taken name, renames the file and rewrites `u:<old>` in every stored set
+  under the playback lock). `/api/anims/<id>.anm` is served `no-cache`.
+- **Smooth playback (2026-10-19 investigation).** Symptom: uploaded
+  animations froze for a moment now and then (spiral-yellow-pink). Not the
+  decompression: measured with the `#ANIM PERF` counters (per-frame open /
+  read / inflate / pixel-paint times, histogram, worst frame, plus skipped and
+  late frames and the max gap; `#ANIM PERF RESET`; `#ANIM PLAY <id>` shows an
+  animation as a live draft for tests, `#ANIM STOP`; `.pio/perf.py` and
+  `perf2.py` in the session drove them). Findings and fixes:
+  1. Painting cost 75 ms of an 89 ms whole-sign frame (12 fps budget 83 ms):
+     every pixel went through the library's `drawPixelRGB888` (gamma maths,
+     bounds checks, two row lookups). `SnakeDisplay::writeRow` now writes a
+     whole canvas row straight into the DMA bit-planes (chain position once
+     per row, 64-entry plane table; the library's private `fb` is reached via
+     an explicit-instantiation trick, no library edit). `Canvas::setRow` is the
+     portable hook; `Face::draw` and `AnimStore::drawFrame` emit rows. Frame
+     time 89 -> 24 ms. Also fixes a colour bug: the library's NO_CIE1931
+     rounding turned level 2 (170) into level 3.
+  2. Opening the file for every frame cost 8 ms: `AnimStore` keeps up to
+     three files open (`closeAll()` under the playback lock before any
+     replace / rename / delete).
+  3. Page polling (`/api/state` every 2 s) lists the animations by reading
+     every file header; **any LittleFS flash access stalls the other core**
+     (flash cache disabled during SPI flash ops), stretching frames to 80 ms
+     and skipping frames. The list is now cached in RAM (`s_listValid`,
+     dropped by `closeAll()`). Uploads still stall playback while they write;
+     that is accepted.
+  Result on all six clips: 12.0 fps shown, no skipped/late frames, max frame
+  26-29 ms, even with the page polling every second. The 84 ms "max gap" is
+  the frame delay itself.
+- **Partition table** is `partitions.csv` (nvs/app0 at the default offsets,
+  the second OTA slot became LittleFS). When flashing a board that still has
+  the default table, also write `0x8000 .pio\build\s3\partitions.bin`.
 
 ## Build, flash, monitor (from WSL)
 
@@ -81,8 +242,12 @@ boot_app0.bin` (boot_app0.bin from
 
 Find the port first; it changes when the user replugs:
 `powershell.exe -NoProfile -Command "Get-PnpDevice -PresentOnly -Class Ports | Select FriendlyName"`.
-The S3 has two USB sockets: **UART** (CH343, serial log works, COM16 last time)
-and **USB** (native; flashing works, log does not since CDC-on-boot is off).
+The S3 has two USB sockets: **UART** (CH343, serial log works; COM14/COM16 so
+far) and **USB** (native; flashing works, log does not since CDC-on-boot is
+off). If only the native socket is available, `pio run -e s3-usbconsole` is
+the same firmware with the console on that socket, but reading its boot
+lines over the native port proved unreliable; asking the user to replug the
+UART socket is quicker.
 
 Read the log with a short pyserial script:
 
@@ -142,7 +307,10 @@ view with the Read tool.
 - Generated, do not edit by hand: `src/fonts/StopFonts.h`
   (`tools/gen_font.py`, DejaVu Sans Bold, 12 sizes 11–56 px, ASCII + Hebrew)
   and `src/sprites/Sprites.h` (`tools/gen_sprites.py`, jointed-pose figures at
-  64×96). Both generators need Pillow under WSL `python3`.
+  64×96 plus the procedural 128×128 "eclipse" discs; a pose may carry a
+  `second` figure and extra `shapes` for props such as the bike). Both
+  generators need Pillow under WSL `python3`; `SHEET_DIR=<dir>` writes the
+  contact sheet `sprites.png` there (view it with the Read tool).
 - Rendering runs on **core 1** (Arduino `loop()`), the web server + captive
   DNS in a task on **core 0**. `StopLightApp::loop()` holds a recursive mutex
   for its whole pass because web handlers (add/edit/show/delete) rebuild the
@@ -241,15 +409,9 @@ view with the Read tool.
 
 ## TODO / ideas the user has raised
 
-- **Upload images / animated GIFs from the page.** Design agreed with the user
-  but not started (removed from the immediate plan when the keyframe editor
-  took priority): the browser
-  decodes and scales (fit-inside or fill-and-crop), quantises to 2-bit RGB
-  with optional dithering, keeps transparency, and sends a small raster file
-  (1 byte/pixel, 0x40 = transparent, per-frame delays) as a multipart upload;
-  the ESP32 stores it in LittleFS (~1.5 MB partition), lists/deletes it, and
-  streams one frame at a time when rendering; uploaded graphics join the
-  per-light "Text / graphic" dropdown next to the built-in sprites. The
-  harness needs the same endpoints (`tools/gfx/`).
+- Converting GIFs directly on the phone (in-browser decoding) was not done;
+  conversion happens on the PC in the animation studio.
+- Uploaded animations were tested in the harness and headless browsers but
+  not yet watched on the LEDs (2026-10-19, no WiFi dongle that day).
 - The "On your marks" sprite comes out small because all frames of a sprite
   share one scale and the sprinting pose is wide.

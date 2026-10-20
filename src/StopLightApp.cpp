@@ -20,7 +20,12 @@ void StopLightApp::prepareFrame(Prepared& p, const LightDef l[3], uint8_t mask, 
     p.layouts[i] = TextLayout();
     p.specs[i] = Face::LightSpec();
     p.specs[i].sprite = Face::spriteById(l[i].graphic.c_str());
-    if (!p.specs[i].sprite && l[i].kind != "off") {
+    p.anim[i] = AnimInfo();
+    p.animMode[i] = l[i].gmode;
+    p.animFrom[i] = l[i].aFrom; p.animLen[i] = l[i].aLen;
+    const bool uploaded = l[i].graphic.startsWith("u:");
+    if (uploaded && l[i].kind != "off") AnimStore::load(l[i].graphic.substring(2), p.anim[i]);
+    if (!p.specs[i].sprite && !uploaded && l[i].kind != "off") {
       p.layouts[i] = Face::layoutFor(i, l[i].text.c_str(), l[i].size);
       p.specs[i].text = &p.layouts[i];
     }
@@ -29,6 +34,23 @@ void StopLightApp::prepareFrame(Prepared& p, const LightDef l[3], uint8_t mask, 
   }
   p.mask = mask;
   p.ms = ms;
+  p.fullLight = -1;
+  for (int i = 0; i < Face::LIGHTS; ++i)
+    if (p.anim[i].ok() && p.anim[i].full()) { p.fullLight = i; break; }
+}
+
+// Uploaded animations: a whole-sign one replaces the face, circle ones are
+// drawn into their (lit) lights over the plain circle.
+bool StopLightApp::drawAnims(Canvas& c, const Prepared& p, uint32_t elapsedMs) {
+  if (p.fullLight >= 0) {
+    const int i = p.fullLight;
+    return AnimStore::drawFrame(p.anim[i], p.animFrame(i, elapsedMs), c, 0, 0, false, p.animMode[i], p.specs[i].fg, p.specs[i].bg);
+  }
+  bool all = true;
+  for (int i = 0; i < Face::LIGHTS; ++i)
+    if (p.anim[i].ok() && ((p.mask >> i) & 1))
+      all &= AnimStore::drawFrame(p.anim[i], p.animFrame(i, elapsedMs), c, 0, i * Face::DIAMETER, true, p.animMode[i], p.specs[i].fg, p.specs[i].bg);
+  return all;
 }
 
 void StopLightApp::preparePos(Prepared& p, int pos) {
@@ -41,6 +63,7 @@ void StopLightApp::preparePos(Prepared& p, int pos) {
   const KeyFrame& f = sets[_current].frames[_playlist[pos]];
   prepareFrame(p, f.l, f.mask(), f.ms);
   p.track = f.track;
+  p.fadeMs = f.fadeMs;
   p.pos = pos;
 }
 
@@ -48,7 +71,8 @@ void StopLightApp::preparePos(Prepared& p, int pos) {
 void StopLightApp::startAudio(const Prepared& p) {
   if (!_mp3 || _draftActive) return;
   if (p.track > 0) _mp3->play(p.track);
-  else if (p.track < 0) _mp3->stop();
+  else if (p.track == -1) _mp3->stop();
+  else if (p.track == -2) _mp3->fadeOut(p.fadeMs);
 }
 
 void StopLightApp::startSet() {
@@ -65,28 +89,36 @@ uint32_t StopLightApp::frameKey(const Prepared& p, uint32_t elapsedMs) const {
   uint32_t k = (uint32_t)p.pos + 1;
   for (int i = 0; i < Face::LIGHTS; ++i)
     if (p.specs[i].sprite) k = k * 64 + Face::spriteFrame(*p.specs[i].sprite, elapsedMs);
+  for (int i = 0; i < Face::LIGHTS; ++i)
+    if (p.anim[i].ok()) k = k * 1000003u + (uint32_t)p.animFrame(i, elapsedMs);
   return k;
 }
 
-void StopLightApp::render(const Prepared& p, uint32_t elapsedMs) {
+bool StopLightApp::render(const Prepared& p, uint32_t elapsedMs) {
   DisplayCanvas c(_display);
-  Face::draw(c, p.specs, p.mask, elapsedMs);
-  _display.show();
-  if (_display.isDoubleBuffered()) Face::draw(c, p.specs, p.mask, elapsedMs);   // keep both buffers equal
+  bool painted = true;
+  for (int pass = 0; pass < (_display.isDoubleBuffered() ? 2 : 1); ++pass) {   // keep both buffers equal
+    if (p.fullLight < 0) Face::draw(c, p.specs, p.mask, elapsedMs);
+    painted &= drawAnims(c, p, elapsedMs);
+    if (pass == 0) _display.show();
+  }
+  return painted;
 }
 
-void StopLightApp::renderSprites(const Prepared& p, uint32_t elapsedMs) {
+bool StopLightApp::renderSprites(const Prepared& p, uint32_t elapsedMs) {
   DisplayCanvas c(_display);
-  Face::drawSpriteBoxes(c, p.specs, p.mask, elapsedMs);
+  if (p.fullLight < 0) Face::drawSpriteBoxes(c, p.specs, p.mask, elapsedMs);
+  const bool painted = drawAnims(c, p, elapsedMs);
   _display.show();
+  return painted;
 }
 
 void StopLightApp::renderCurrent() {
   xSemaphoreTakeRecursive(_lock, portMAX_DELAY);
   startSet();
-  render(*_cur, 0);
+  const bool painted = render(*_cur, 0);
   startAudio(*_cur);
-  _lastKey = frameKey(*_cur, 0);
+  _lastKey = painted ? frameKey(*_cur, 0) : 0xFFFFFFFF;   // not ready: retry via renderSprites
   xSemaphoreGiveRecursive(_lock);
 }
 
@@ -124,14 +156,19 @@ void StopLightApp::clearDraft() {
 void StopLightApp::loop() {
   auto& sets = _store.sets();
   const uint32_t now = millis();
+  ++AnimStore::dbgRenderBeat; AnimStore::dbgRenderStage = 1;
+  const uint32_t l0 = micros();
   xSemaphoreTakeRecursive(_lock, portMAX_DELAY);   // the web task rebuilds state via renderCurrent()
+  { const uint32_t w = micros() - l0; if (w > playPerf.maxLockWaitUs) playPerf.maxLockWaitUs = w; }
   if (_draftActive && now - _draftAt > LIVE_TIMEOUT_MS) { clearDraft(); xSemaphoreGiveRecursive(_lock); return; }
   if (_draftDirty) {
     _draftDirty = false;
     _setStart = _frameStart = now;
+    AnimStore::dbgRenderStage = 2;
     startSet();
-    render(*_cur, 0);
-    _lastKey = frameKey(*_cur, 0);
+    AnimStore::dbgRenderStage = 3;
+    const bool painted = render(*_cur, 0);
+    _lastKey = painted ? frameKey(*_cur, 0) : 0xFFFFFFFF;   // not ready: retry via renderSprites
     xSemaphoreGiveRecursive(_lock);
     return;
   }
@@ -150,9 +187,9 @@ void StopLightApp::loop() {
       if (_next->pos == _pos) { Prepared* t = _cur; _cur = _next; _next = t; }
       else preparePos(*_cur, _pos);
       _next->pos = -1;
-      render(*_cur, 0);
+      const bool painted = render(*_cur, 0);
       startAudio(*_cur);
-      _lastKey = frameKey(*_cur, 0);
+      _lastKey = painted ? frameKey(*_cur, 0) : 0xFFFFFFFF;   // not ready: retry via renderSprites
       xSemaphoreGiveRecursive(_lock);
       return;
     }
@@ -164,7 +201,30 @@ void StopLightApp::loop() {
       else _next->pos = -2;   // next set will be prepared by showSet()
     }
   }
+  AnimStore::dbgRenderStage = 4;
   const uint32_t key = frameKey(*_cur, elapsed);
-  if (key != _lastKey) { renderSprites(*_cur, elapsed); _lastKey = key; }
+  if (key != _lastKey) {
+    AnimStore::dbgRenderStage = 5;
+    // Smoothness bookkeeping for the first uploaded animation in the frame.
+    for (int i = 0; i < Face::LIGHTS; ++i) {
+      if (!_cur->anim[i].ok()) continue;
+      const int fi = _cur->animFrame(i, elapsed);
+      if (fi != _perfLastFrame) {
+        const uint32_t t = millis();
+        const int n = _cur->anim[i].delays.size();
+        if (_perfLastFrame >= 0) {
+          const int step = (fi - _perfLastFrame + n) % n;
+          if (step > 1) playPerf.skipped += step - 1;
+          const uint32_t gap = t - _perfLastAt;
+          if (gap > playPerf.maxGapMs) playPerf.maxGapMs = gap;
+          if (gap > 2u * _cur->anim[i].delays[_perfLastFrame]) ++playPerf.late;
+        }
+        ++playPerf.shown; _perfLastFrame = fi; _perfLastAt = t;
+      }
+      break;
+    }
+    if (renderSprites(*_cur, elapsed)) _lastKey = key;   // a frame still decoding: try again next loop
+  }
+  { const uint32_t d = micros() - l0; if (d > playPerf.maxLoopUs) playPerf.maxLoopUs = d; }
   xSemaphoreGiveRecursive(_lock);
 }

@@ -20,4 +20,7 @@ inline uint8_t level8(uint8_t l) { return (uint8_t)(l * 85); }
 struct Canvas {
   virtual ~Canvas() {}
   virtual void set(int x, int y, Rgb2 colour) = 0;
+  // n pixels of row y starting at x0. Override where a whole row is much
+  // cheaper than n single pixels (the LED display).
+  virtual void setRow(int x0, int y, const Rgb2* px, int n) { for (int i = 0; i < n; ++i) set(x0 + i, y, px[i]); }
 };

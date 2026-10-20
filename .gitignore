@@ -2,3 +2,10 @@
 .vscode/
 tools/local_sets.json
 tools/stopcli
+
+tools/gfx/sources/
+tools/__pycache__/
+tools/gfx/bin/
+tools/gfx/work/
+tools/gfx/backup/
+tools/gfx/*.anm

@@ -6,7 +6,8 @@
 //   stopcli rle key=value ...                  -> RLE stream on stdout (same bytes as /api/preview.rle)
 //   stopcli ppm key=value ...                  -> PPM on stdout
 //     keys as in the web API: t0..t2 text, s0..s2 size cap, c0..c2 circle colour (0bRRGGBB),
-//     f0..f2 ink colour, g0..g2 graphic id, m lit mask, k elapsed ms (sprite frame)
+//     f0..f2 ink colour, g0..g2 graphic id, m lit mask, k elapsed ms (sprite frame),
+//     o=1 unlit lights dark instead of a dim ring
 // Build: g++ -std=c++11 -O2 -Isrc tools/stopcli.cpp src/TextLayout.cpp src/Face.cpp src/Preview.cpp -o tools/stopcli
 #include <cstdio>
 #include <cstring>
@@ -72,6 +73,7 @@ int main(int argc, char** argv) {
       specs[i].fg = atoi(get("f" + n)) & 63;
     }
     const uint8_t mask = *get("m") ? (atoi(get("m")) & 7) : 7;
+    Face::setOffDark(atoi(get("o")) != 0);           // o=1: unlit lights completely dark
     BitmapCanvas c;
     Face::draw(c, specs, mask, (uint32_t)atol(get("k")));
     if (cmd == "rle") {

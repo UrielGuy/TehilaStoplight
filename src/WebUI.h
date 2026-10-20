@@ -3,6 +3,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include "SetStore.h"
+#include "SnakeDisplay.h"
 
 // WiFi access point + captive-portal web server for managing text sets.
 class StopLightApp;   // owns display + store + rotation
@@ -10,6 +11,7 @@ class StopLightApp;   // owns display + store + rotation
 class WebUI {
  public:
   WebUI(StopLightApp& app, SetStore& store) : _app(app), _store(store), _server(80) {}
+  void setDisplay(const SnakeDisplay* d) { _display = d; }
   void setMp3(class Mp3Player* m) { _mp3 = m; }
   void begin(const char* ssid, const char* password);
   void loop();
@@ -23,8 +25,14 @@ class WebUI {
   void handleAdd(int replaceIndex = -1);
   void handleDelete();
   void handleShow();
+  void handleAnimUpload();
+  void handleAnimDone();
+  void sendAnims();
+  String _upId, _upErr;
+  bool _upOpen = false;
   bool captiveRedirect();
   StopLightApp& _app;
+  const SnakeDisplay* _display = nullptr;
   SetStore& _store;
   WebServer _server;
   DNSServer _dns;

@@ -6,6 +6,8 @@
 #include "PanelPins.h"
 #include "Mp3Player.h"
 #include <Preferences.h>
+#include "AnimStore.h"
+#include "SerialLink.h"
 
 // StopLight: three circles with text or figures on a 128x384 HUB75 chain,
 // managed from a captive-portal web page on the ESP32's own access point.
@@ -109,10 +111,18 @@ SetStore store;
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 StopLightApp app(display, store);
 WebUI web(app, store);
+SerialLink uartLink(Serial, app);       // animation uploads over the UART socket
+SerialLink usbLink(USBSerial, app);     // ... and over the native USB socket
 Mp3Player mp3;   // DIYables Mini MP3 on UART1 (Mp3Pins), optional
 
 void setup() {
+  Serial.setRxBufferSize(4096);   // serial animation uploads arrive in 1 KB chunks
   Serial.begin(115200);
+  USBSerial.setRxBufferSize(4096);
+  USBSerial.setTxBufferSize(4096);   // a whole read-back reply (~1.1 KB) fits without waiting
+  USBSerial.begin();
+  USBSerial.setTxTimeoutMs(50);   // replies only; with 0 the driver drops a write whenever its lock is busy
+  USBSerial.setDebugOutput(false); // keep the ESP log off the native USB socket (it is the upload channel there)
   delay(300);
 
   // Display first: the DMA buffers want contiguous internal RAM.
@@ -123,6 +133,7 @@ void setup() {
   // (2026-09-28). Sprite frames repaint only their box, so tearing is not
   // visible. The two-panel bench keeps double buffering.
   opt.doubleBuffer = (PANEL_COUNT <= 2);
+  { Preferences p; p.begin("stoplight", true); opt.colourRotated = p.getBool("colrot", true); p.end(); }   // 2026-10-19: the panels in use have rotated colour inputs
   if (!display.begin(opt)) {
     Serial.println("Double-buffered init failed, retrying single-buffered");
     opt.doubleBuffer = false;
@@ -132,19 +143,32 @@ void setup() {
   display.setBrightness(128);
   Serial.printf("Free heap after display init: %u bytes\n", ESP.getFreeHeap());
 
+  extern uint32_t bootHeap[5];
+  bootHeap[0] = ESP.getFreeHeap();
   store.load();
-  { Preferences p; p.begin("stoplight", true); const uint8_t vol = p.getUChar("vol", 20); p.end();
+  AnimStore::begin();
+  bootHeap[1] = ESP.getFreeHeap();
+  AnimStore::beginDecoders();   // two background decoder tasks, one per core
+  bootHeap[2] = ESP.getFreeHeap();
+  { Preferences p; p.begin("stoplight", true);
+    const uint8_t vol = p.getUChar("vol", 20);
+    Face::setOffDark(p.getBool("offdark", false));
+    SnakeDisplay::setRotated(p.getBool("rot180", true));   // the sign hangs the other way up since 2026-10-19
+    p.end();
     mp3.begin(Serial1, Mp3Pins::rx_pin, Mp3Pins::tx_pin, vol); }
   app.setMp3(&mp3);
   web.setMp3(&mp3);
+  web.setDisplay(&display);
   app.showSet(0);
+  bootHeap[3] = ESP.getFreeHeap();
   web.begin(AP_SSID, AP_PASS);
+  bootHeap[4] = ESP.getFreeHeap();
   Serial.printf("Free heap after start: %u bytes\n", ESP.getFreeHeap());
 
   // Two cores, two jobs: the web server (and captive DNS) runs on core 0 next
   // to the WiFi stack; frame rendering owns core 1 through the Arduino loop.
   xTaskCreatePinnedToCore([](void*) {
-    for (;;) { web.loop(); vTaskDelay(pdMS_TO_TICKS(2)); }
+    for (;;) { web.loop(); uartLink.poll(); usbLink.poll(); vTaskDelay(pdMS_TO_TICKS(2)); }
   }, "web", 16 * 1024, nullptr, 1, nullptr, 0);
 }
 

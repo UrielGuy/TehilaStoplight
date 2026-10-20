@@ -16,8 +16,12 @@ class Mp3Player {
  public:
   void begin(HardwareSerial& serial, int rxPin, int txPin, uint8_t volume);
   void poll();                                // parse replies, drive the start-up sequence
-  void play(uint16_t track);                  // 1-based root track
+  void play(uint16_t track);                  // 1-based root track; cancels a fade and restores the volume
   void stop();
+  // Lower the volume linearly to 0 over `ms`, then stop and restore the
+  // saved volume for whatever plays next.
+  void fadeOut(uint32_t ms);
+  bool fading() const { return _fading; }
   void setVolume(uint8_t v);                  // 0..30
   uint8_t volume() const { return _volume; }
   bool present() const { return _present; }   // answered at least one query
@@ -37,4 +41,7 @@ class Mp3Player {
   uint32_t _started = 0, _lastQuery = 0;
   int _queries = 0;
   const char* _err = "";
+  bool _fading = false;
+  uint32_t _fadeStart = 0, _fadeMs = 0;
+  int _fadeLevel = -1;                        // last volume sent during the fade
 };

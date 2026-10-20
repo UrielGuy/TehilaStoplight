@@ -22,6 +22,10 @@ int spriteFrame(const Sprite& s, uint32_t elapsedMs) {
   return s.nFrames <= 1 ? 0 : (int)((elapsedMs / (s.frameMs ? s.frameMs : 1)) % s.nFrames);
 }
 
+static bool s_offDark = false;
+void setOffDark(bool dark) { s_offDark = dark; }
+bool offDark() { return s_offDark; }
+
 static void drawSprite(Canvas& c, const Sprite& s, int frame, int light, Rgb2 ink) {
   const int x0 = centreX(light) - s.w / 2, y0 = centreY(light) - s.h / 2;
   for (int y = 0; y < s.h; ++y)
@@ -41,15 +45,15 @@ void draw(Canvas& c, const LightSpec specs[LIGHTS], uint8_t litMask, uint32_t el
     if (ink == base) ink = (base == RGB2_BLACK) ? rgb2(3, 3, 3) : RGB2_BLACK;   // never invisible
     const Rgb2 colour = lit ? base : rgb2Dim(base);
     const int y0 = light * DIAMETER;
+    Rgb2 row[DIAMETER];
     for (int y = 0; y < DIAMETER; ++y) {
       const float dy = y - cc;
       for (int x = 0; x < DIAMETER; ++x) {
         const float dx = x - cc;
         const float d2 = dx * dx + dy * dy;
-        Rgb2 col = RGB2_BLACK;
-        if (d2 <= r2 && (lit || d2 >= rIn2)) col = colour;
-        c.set(x, y0 + y, col);
+        row[x] = (d2 <= r2 && (lit || (!s_offDark && d2 >= rIn2))) ? colour : RGB2_BLACK;
       }
+      c.setRow(0, y0 + y, row, DIAMETER);   // one call per row: much cheaper on the LEDs
     }
     if (!lit) continue;
     if (sp.sprite) drawSprite(c, *sp.sprite, spriteFrame(*sp.sprite, elapsedMs), light, ink);

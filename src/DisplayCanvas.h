@@ -6,7 +6,8 @@
 class DisplayCanvas : public Canvas {
  public:
   explicit DisplayCanvas(SnakeDisplay& d) : _d(d) {}
-  void set(int x, int y, Rgb2 c) override { _d.setPixel2(x, y, rgb2R(c), rgb2G(c), rgb2B(c)); }
+  void set(int x, int y, Rgb2 c) override { _d.writeRow(x, y, &c, 1); }
+  void setRow(int x0, int y, const Rgb2* px, int n) override { _d.writeRow(x0, y, px, n); }
  private:
   SnakeDisplay& _d;
 };

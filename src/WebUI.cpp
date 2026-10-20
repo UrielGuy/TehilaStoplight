@@ -6,6 +6,8 @@
 #include "Preview.h"
 #include "Mp3Player.h"
 #include <Preferences.h>
+#include <LittleFS.h>
+#include "AnimStore.h"
 #include <vector>
 
 static const byte DNS_PORT = 53;
@@ -40,12 +42,84 @@ void WebUI::begin(const char* ssid, const char* password) {
     Preferences p; p.begin("stoplight", false); p.putUChar("vol", v); p.end();
     sendState();
   });
+  _server.on("/api/settings", HTTP_POST, [this] {
+    JsonDocument doc;
+    if (deserializeJson(doc, _server.arg("plain"))) { _server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+    if (doc["offDark"].is<bool>()) {
+      const bool dark = doc["offDark"].as<bool>();
+      Face::setOffDark(dark);
+      Preferences p; p.begin("stoplight", false); p.putBool("offdark", dark); p.end();
+      _app.renderCurrent();
+    }
+    if (doc["colourRotated"].is<bool>()) {   // takes effect at display init: save and restart
+      Preferences p; p.begin("stoplight", false); p.putBool("colrot", doc["colourRotated"].as<bool>()); p.end();
+      _server.send(200, "application/json", "{\"restart\":true}");
+      delay(300);
+      ESP.restart();
+      return;
+    }
+    if (doc["rotate180"].is<bool>()) {
+      const bool rot = doc["rotate180"].as<bool>();
+      SnakeDisplay::setRotated(rot);
+      Preferences p; p.begin("stoplight", false); p.putBool("rot180", rot); p.end();
+      _app.renderCurrent();
+    }
+    sendState();
+  });
   _server.on("/api/sets", HTTP_POST, [this] { handleAdd(); });
+  _server.on("/api/anims", HTTP_GET, [this] { sendAnims(); });
+  _server.on("/api/anims", HTTP_POST, [this] { handleAnimDone(); }, [this] { handleAnimUpload(); });
   _server.onNotFound([this] {
     const String& uri = _server.uri();
     if (uri.startsWith("/api/sets/") && _server.method() == HTTP_DELETE) { handleDelete(); return; }
     if (uri.startsWith("/api/sets/") && _server.method() == HTTP_PUT) { handleAdd(uri.substring(strlen("/api/sets/")).toInt()); return; }
     if (uri.startsWith("/api/show/") && _server.method() == HTTP_POST)   { handleShow();   return; }
+    if (uri.startsWith("/api/anims/") && uri.endsWith("/rename") && _server.method() == HTTP_POST) {
+      // Rename a stored animation and point every set that uses it at the new name.
+      const String from = AnimStore::sanitizeId(uri.substring(strlen("/api/anims/"), uri.length() - strlen("/rename")));
+      JsonDocument doc;
+      if (deserializeJson(doc, _server.arg("plain"))) { _server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+      const String to = AnimStore::sanitizeId((const char*)(doc["name"] | ""));
+      auto fail = [this](const String& e) { JsonDocument d; d["error"] = e; String o; serializeJson(d, o); _server.send(400, "application/json", o); };
+      if (!AnimStore::exists(from)) { fail("no such animation"); return; }
+      if (to == from) { sendAnims(); return; }
+      if (AnimStore::exists(to)) { fail("there is already an animation called " + to); return; }
+      _app.lockPlayback();
+      AnimStore::closeAll();
+      const bool ok = LittleFS.rename(AnimStore::pathFor(from), AnimStore::pathFor(to));
+      int changed = 0;
+      if (ok)
+        for (TextSet& st : _store.sets())
+          for (KeyFrame& f : st.frames)
+            for (LightDef& l : f.l)
+              if (l.graphic == "u:" + from) { l.graphic = "u:" + to; ++changed; }
+      if (changed) _store.save();
+      _app.unlockPlayback();
+      if (!ok) { fail("rename failed"); return; }
+      _app.renderCurrent();
+      Serial.printf("[anim] renamed '%s' to '%s' (%d uses in sets updated)\n", from.c_str(), to.c_str(), changed);
+      sendAnims();
+      return;
+    }
+    if (uri.startsWith("/api/anims/")) {
+      String id = uri.substring(strlen("/api/anims/"));
+      if (id.endsWith(".anm")) id = id.substring(0, id.length() - 4);
+      id = AnimStore::sanitizeId(id);
+      if (_server.method() == HTTP_GET) {
+        File f = LittleFS.open(AnimStore::pathFor(id), "r");
+        if (!f) { _server.send(404, "text/plain", "no such animation"); return; }
+        _server.sendHeader("Cache-Control", "no-cache");   // a name can be replaced or renamed
+        _server.streamFile(f, "application/octet-stream");
+        f.close();
+        return;
+      }
+      if (_server.method() == HTTP_DELETE) {
+        _app.lockPlayback(); AnimStore::remove(id); _app.unlockPlayback();
+        _app.renderCurrent();
+        sendAnims();
+        return;
+      }
+    }
     if (uri.startsWith("/api/mp3/play/") && _server.method() == HTTP_POST) {
       if (_mp3) _mp3->play(uri.substring(strlen("/api/mp3/play/")).toInt());
       sendState(); return;
@@ -83,6 +157,16 @@ void WebUI::sendState() {
   mp3["tracks"] = _mp3 ? _mp3->trackCount() : 0;
   mp3["volume"] = _mp3 ? _mp3->volume() : 0;
   mp3["error"] = _mp3 ? _mp3->lastError() : "";
+  doc["settings"]["offDark"] = Face::offDark();
+  doc["settings"]["rotate180"] = SnakeDisplay::rotated();
+  doc["settings"]["colourRotated"] = _display && _display->colourRotated();
+  JsonArray anims = doc["anims"].to<JsonArray>();
+  for (const auto& e : AnimStore::list()) {
+    JsonObject o = anims.add<JsonObject>();
+    o["id"] = e.id; o["full"] = e.h > e.w; o["frames"] = e.frames; o["ms"] = e.ms; o["bytes"] = e.bytes;
+  }
+  doc["animFree"] = AnimStore::freeBytes();
+  doc["animTotal"] = AnimStore::totalBytes();
   doc["heap"] = ESP.getFreeHeap();
   doc["heapMin"] = ESP.getMinFreeHeap();
   doc["heapBlock"] = ESP.getMaxAllocHeap();
@@ -182,7 +266,9 @@ bool WebUI::checkLights(const LightDef l[3], String& err) {
   static const char* names[3] = {"top", "middle", "bottom"};
   for (int i = 0; i < 3; ++i) {
     if (l[i].graphic.length()) {
-      if (!Face::spriteById(l[i].graphic.c_str())) { err = String(names[i]) + ": unknown graphic"; return false; }
+      if (l[i].graphic.startsWith("u:")) {
+        if (!AnimStore::exists(l[i].graphic.substring(2))) { err = String(names[i]) + ": animation not on the sign"; return false; }
+      } else if (!Face::spriteById(l[i].graphic.c_str())) { err = String(names[i]) + ": unknown graphic"; return false; }
       continue;
     }
     if (l[i].text.length() > SetStore::MAX_TEXT_BYTES) { err = String(names[i]) + ": text too long"; return false; }
@@ -262,3 +348,69 @@ void WebUI::handleShow() {
   sendState();
 }
 
+
+// ---------- uploaded animations ----------
+static File s_upFile;
+
+void WebUI::sendAnims() {
+  JsonDocument doc;
+  JsonArray arr = doc["anims"].to<JsonArray>();
+  for (const auto& e : AnimStore::list()) {
+    JsonObject o = arr.add<JsonObject>();
+    o["id"] = e.id; o["full"] = e.h > e.w; o["frames"] = e.frames; o["ms"] = e.ms; o["bytes"] = e.bytes;
+  }
+  doc["free"] = AnimStore::freeBytes();
+  doc["total"] = AnimStore::totalBytes();
+  String out; serializeJson(doc, out);
+  _server.sendHeader("Cache-Control", "no-store");
+  _server.send(200, "application/json", out);
+}
+
+// Streams the multipart body to /a/.upload; the done handler validates it and
+// renames it into place under the playback lock.
+void WebUI::handleAnimUpload() {
+  HTTPUpload& up = _server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    _upErr = "";
+    _upId = AnimStore::sanitizeId(_server.hasArg("name") && _server.arg("name").length() ? _server.arg("name") : up.filename);
+    // The page sends the file size: a replacement that would not fit next to
+    // the old copy deletes the old copy first (writing into a full LittleFS
+    // stalls for ~30 s). The page asked the user before replacing.
+    const uint32_t size = _server.hasArg("size") ? (uint32_t)_server.arg("size").toInt() : 0;
+    if (size && size + 8192 > AnimStore::freeBytes() && AnimStore::exists(_upId)) {
+      _app.lockPlayback(); AnimStore::remove(_upId); _app.unlockPlayback();
+      _app.renderCurrent();
+    }
+    if (size && size + 8192 > AnimStore::freeBytes()) { _upErr = "storage full (" + String(AnimStore::freeBytes() / 1024) + " KB free)"; return; }
+    s_upFile = LittleFS.open("/a/.upload", "w");
+    _upOpen = (bool)s_upFile;
+    if (!_upOpen) _upErr = "cannot write to storage";
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (_upOpen && _upErr.isEmpty() && s_upFile.write(up.buf, up.currentSize) != up.currentSize) _upErr = "storage full";
+  } else if (up.status == UPLOAD_FILE_END || up.status == UPLOAD_FILE_ABORTED) {
+    if (_upOpen) { s_upFile.close(); _upOpen = false; }
+    if (up.status == UPLOAD_FILE_ABORTED) _upErr = "upload aborted";
+  }
+}
+
+void WebUI::handleAnimDone() {
+  if (_upOpen) { s_upFile.close(); _upOpen = false; }
+  String err = _upErr;
+  if (err.isEmpty() && _upId.isEmpty()) err = "no file";
+  if (err.isEmpty()) AnimStore::validate("/a/.upload", err);
+  if (!err.isEmpty()) {
+    LittleFS.remove("/a/.upload");
+    JsonDocument d; d["error"] = err; String out; serializeJson(d, out);
+    _server.send(400, "application/json", out);
+    return;
+  }
+  _app.lockPlayback();
+  const String path = AnimStore::pathFor(_upId);
+  AnimStore::closeAll();
+  LittleFS.remove(path);
+  LittleFS.rename("/a/.upload", path);
+  _app.unlockPlayback();
+  _app.renderCurrent();   // a set may already use this name
+  Serial.printf("[anim] stored '%s', %u KB free\n", _upId.c_str(), (unsigned)(AnimStore::freeBytes() / 1024));
+  sendAnims();
+}

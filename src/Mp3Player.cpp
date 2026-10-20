@@ -31,8 +31,18 @@ void Mp3Player::send(uint8_t cmd, uint16_t param, bool feedback) {
   xSemaphoreGive(_lock);
 }
 
-void Mp3Player::play(uint16_t track) { if (track) send(CMD_PLAY_TRACK, track); }
-void Mp3Player::stop() { send(CMD_STOP, 0); }
+void Mp3Player::play(uint16_t track) {
+  if (!track) return;
+  if (_fading) { _fading = false; send(CMD_VOLUME, _volume); delay(20); }   // back to full volume first
+  send(CMD_PLAY_TRACK, track);
+}
+void Mp3Player::stop() {
+  if (_fading) { _fading = false; send(CMD_VOLUME, _volume); }
+  send(CMD_STOP, 0);
+}
+void Mp3Player::fadeOut(uint32_t ms) {
+  _fading = true; _fadeStart = millis(); _fadeMs = ms < 200 ? 200 : ms; _fadeLevel = _volume;
+}
 void Mp3Player::setVolume(uint8_t v) { _volume = v > 30 ? 30 : v; send(CMD_VOLUME, _volume); }
 void Mp3Player::rescan() { _queries = 0; _lastQuery = 0; }
 
@@ -62,6 +72,18 @@ void Mp3Player::handle(const uint8_t* f) {
 
 void Mp3Player::poll() {
   if (!_s) return;
+  if (_fading) {
+    const uint32_t t = millis() - _fadeStart;
+    if (t >= _fadeMs) {
+      _fading = false;
+      send(CMD_STOP, 0);
+      delay(20);
+      send(CMD_VOLUME, _volume);               // restore for the next track
+    } else {
+      const int level = (int)((uint32_t)_volume * (_fadeMs - t) / _fadeMs);
+      if (level != _fadeLevel) { _fadeLevel = level; send(CMD_VOLUME, level); }
+    }
+  }
   while (_s->available()) {
     const uint8_t b = _s->read();
     if (_n == 0 && b != 0x7E) continue;

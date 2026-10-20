@@ -9,6 +9,7 @@ SnakeDisplay::~SnakeDisplay() {
 bool SnakeDisplay::begin(const Options& opt) {
   if (_dma) return true;
 
+  _colourRotated = opt.colourRotated;
   HUB75_I2S_CFG::i2s_pins pins = {
       PanelPins::r1_pin, PanelPins::g1_pin, PanelPins::b1_pin,
       PanelPins::r2_pin, PanelPins::g2_pin, PanelPins::b2_pin,
@@ -16,6 +17,10 @@ bool SnakeDisplay::begin(const Options& opt) {
       PanelPins::d_pin,  PanelPins::e_pin,
       PanelPins::lat_pin, PanelPins::oe_pin, PanelPins::clk_pin};
 
+  if (opt.colourRotated) {   // R takes G's pin, G takes B's, B takes R's
+    pins.r1 = PanelPins::g1_pin; pins.g1 = PanelPins::b1_pin; pins.b1 = PanelPins::r1_pin;
+    pins.r2 = PanelPins::g2_pin; pins.g2 = PanelPins::b2_pin; pins.b2 = PanelPins::r2_pin;
+  }
   HUB75_I2S_CFG cfg(PANEL_W, PANEL_H, PANELS, pins);
   cfg.i2sspeed    = opt.clock;
   cfg.double_buff = opt.doubleBuffer;
@@ -41,8 +46,59 @@ void SnakeDisplay::show() {
   if (_dma && _doubleBuffered) _dma->flipDMABuffer();
 }
 
+bool SnakeDisplay::s_rotated = false;
+
+// The library keeps its frame buffer private; an explicit template
+// instantiation may name private members (C++ [temp.explicit]), which gives us
+// a pointer-to-member without modifying the library.
+namespace {
+struct FbTag { typedef frameStruct* MatrixPanel_I2S_DMA::*type; friend type fbMember(FbTag); };
+template <typename Tag, typename Tag::type M> struct Expose { friend typename Tag::type fbMember(Tag) { return M; } };
+template struct Expose<FbTag, &MatrixPanel_I2S_DMA::fb>;
+
+// Bits per colour-depth plane for every Rgb2 colour: plane 0 = LSB, 1 = MSB;
+// bit order B G R (BIT_R1 is bit 0), as in updateMatrixDMABuffer.
+struct PlaneLut {
+  uint8_t p[2][64];
+  PlaneLut() {
+    for (int c = 0; c < 64; ++c)
+      for (int d = 0; d < 2; ++d) {
+        const int r = (c >> 4) & 3, g = (c >> 2) & 3, b = c & 3;
+        p[d][c] = (((b >> d) & 1) << 2) | (((g >> d) & 1) << 1) | ((r >> d) & 1);
+      }
+  }
+};
+const PlaneLut LUT;
+}  // namespace
+
+void IRAM_ATTR SnakeDisplay::writeRow(int x0, int y, const uint8_t* rgb2, int n) {
+  if (!_dma || y < 0 || y >= HEIGHT) return;
+  if (x0 < 0) { rgb2 -= x0; n += x0; x0 = 0; }
+  if (x0 + n > WIDTH) n = WIDTH - x0;
+  if (n <= 0) return;
+  static_assert(COLOR_BITS == 2, "writeRow assumes 2 bits per channel");
+  int dx, dy, dx1, dy1;
+  mapToChain(x0, y, dx, dy);
+  int step = 1;
+  if (n > 1) { mapToChain(x0 + 1, y, dx1, dy1); step = dx1 - dx; }
+  frameStruct* fb = _dma->*fbMember(FbTag());
+  const int half = PANEL_H / 2;                    // two rows are clocked out in parallel
+  int row = dy, shift = 0;
+  uint16_t clear = BITMASK_RGB1_CLEAR;
+  if (row >= half) { row -= half; shift = BITS_RGB2_OFFSET; clear = BITMASK_RGB2_CLEAR; }
+  rowBitStruct* rb = fb->rowBits[row].get();
+  ESP32_I2S_DMA_STORAGE_TYPE* p0 = rb->getDataPtr(0) + dx;
+  ESP32_I2S_DMA_STORAGE_TYPE* p1 = rb->getDataPtr(1) + dx;
+  for (int i = 0; i < n; ++i, p0 += step, p1 += step) {
+    const uint8_t c = rgb2[i] & 63;
+    *p0 = (*p0 & clear) | (LUT.p[0][c] << shift);
+    *p1 = (*p1 & clear) | (LUT.p[1][c] << shift);
+  }
+}
+
 bool SnakeDisplay::mapToChain(int x, int y, int& dx, int& dy) {
   if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return false;
+  if (s_rotated) { x = WIDTH - 1 - x; y = HEIGHT - 1 - y; }
 
   const int panel = y / PANEL_H;   // 0 = top panel = first in the chain
   const int py    = y % PANEL_H;
@@ -73,7 +129,8 @@ void SnakeDisplay::setPixelLevel(int x, int y, uint8_t r, uint8_t g, uint8_t b) 
 }
 
 void SnakeDisplay::setPixel2(int x, int y, uint8_t r2, uint8_t g2, uint8_t b2) {
-  setPixel(x, y, (r2 & 3) * 85, (g2 & 3) * 85, (b2 & 3) * 85);
+  const uint8_t c = ((r2 & 3) << 4) | ((g2 & 3) << 2) | (b2 & 3);
+  writeRow(x, y, &c, 1);   // exact levels (the library's linear mapping turned 170 into level 3)
 }
 
 void SnakeDisplay::setPixel565(int x, int y, uint16_t color) {

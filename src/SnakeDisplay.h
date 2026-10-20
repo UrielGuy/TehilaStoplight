@@ -44,7 +44,11 @@ class SnakeDisplay {
     HUB75_I2S_CFG::clk_speed clock = HUB75_I2S_CFG::HZ_10M;
     uint8_t minRefreshHz = 60;    // driver shortens low bit-planes to stay above this
     bool doubleBuffer = false;    // draw off-screen, then show(); doubles DMA RAM
+    // Panels whose colour inputs are rotated one step (the "other batch":
+    // red shows blue, green shows red with the maker's pin table).
+    bool colourRotated = false;
   };
+  bool colourRotated() const { return _colourRotated; }
 
   // Allocates the DMA buffers and starts refreshing. Call this BEFORE
   // WiFi.begin() so the ~96 KB of DMA-capable RAM is still free.
@@ -70,6 +74,18 @@ class SnakeDisplay {
   // costs no colour resolution.
   void setBrightness(uint8_t brightness);
 
+  // Whole-image rotation by 180 degrees (the sign hung the other way up).
+  // Runtime so the page can switch it; applied in mapToChain.
+  static void setRotated(bool r) { s_rotated = r; }
+  static bool rotated() { return s_rotated; }
+
+  // Fast path: n pixels of canvas row y from x0, as Rgb2 (0bRRGGBB, 2-bit
+  // levels), written straight into the DMA frame buffer. The chain position
+  // is worked out once per row and colours come from a 64-entry table:
+  // ~0.1 us per pixel instead of ~1.5 us through drawPixelRGB888 (measured
+  // 2026-10-19; a whole-sign animation frame went from 75 ms to a few ms).
+  void writeRow(int x0, int y, const uint8_t* rgb2, int n);
+
   // Map canvas (x,y) to DMA-chain (dx,dy). Returns false if out of range.
   // Exposed so tests / a host-side simulator can check the geometry.
   static bool mapToChain(int x, int y, int& dx, int& dy);
@@ -77,6 +93,11 @@ class SnakeDisplay {
   // Escape hatch: the underlying Adafruit_GFX-derived panel object, if you
   // want to draw straight onto the 768x64 chain.
   MatrixPanel_I2S_DMA* raw() { return _dma; }
+
+ private:
+  static bool s_rotated;
+  bool _colourRotated = false;
+ public:
 
   bool isRunning() const { return _dma != nullptr; }
 

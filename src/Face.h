@@ -35,8 +35,13 @@ struct LightSpec {
   Rgb2 fg = RGB2_BLACK;
 };
 
+// Global look of an unlit light: a dim ring (default) or completely dark.
+void setOffDark(bool dark);
+bool offDark();
+
 // Draw the whole face. litMask bit i = light i is lit; an unlit light is a
-// dim ring with nothing inside. elapsedMs picks each sprite's frame.
+// dim ring with nothing inside (or dark, see setOffDark). elapsedMs picks
+// each sprite's frame.
 void draw(Canvas& c, const LightSpec specs[LIGHTS], uint8_t litMask = 7, uint32_t elapsedMs = 0);
 // Convenience for callers that only have text.
 void draw(Canvas& c, const TextLayout* const layouts[LIGHTS], uint8_t litMask = 7,

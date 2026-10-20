@@ -103,3 +103,14 @@ repaint only their own box, so the single buffer does not tear visibly.
 - 2 bits/channel: 48 KB per bit-plane per buffer for six panels.
 - Some 128×64 panels need the FM6126A init sequence
   (`cfg.driver = HUB75_I2S_CFG::FM6126A`); these do not.
+
+## Flash access stalls the renderer
+
+LittleFS reads and writes go through the SPI flash driver, which disables the
+flash cache and spins the *other* core while the operation runs. On the sign
+that shows as animation frames stretching from 24 to 80 ms whenever the web
+task touches the file system. Keep file access on the web task to a minimum
+while animations play (the animation list is cached in RAM; files stay open
+on the render core). PSRAM: this DevKit's chip has 8 MB of embedded octal
+PSRAM, enabled with `board_build.arduino.memory_type = qio_opi` and
+`-DBOARD_HAS_PSRAM` (the format 3 decoders keep their frame buffers there).

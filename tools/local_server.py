@@ -7,7 +7,11 @@ Serves the same page the ESP32 serves (src/WebPage.h) and the same API, with
 /api/check and /api/preview.bmp answered by tools/stopcli (built from the same
 C++ as the firmware). Sets live in tools/local_sets.json instead of NVS.
 """
-import json, os, re, subprocess, sys, urllib.parse
+import json
+import email.policy
+import email.parser
+import struct
+import re, os, re, subprocess, sys, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +54,32 @@ def sizes():
 def sprites():
     return json.loads(subprocess.run([CLI, "sprites"], capture_output=True, text=True).stdout or "[]")
 
+GFX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gfx")   # uploaded animations (the sign keeps them in LittleFS)
+
+def anim_id(raw):
+    raw = os.path.basename(raw)
+    if raw.endswith(".anm"): raw = raw[:-4]
+    out = re.sub(r"[ .]", "-", raw.lower())
+    return re.sub(r"[^a-z0-9_-]", "", out)[:24] or "anim"
+
+def anim_path(i):
+    return os.path.join(GFX, anim_id(i) + ".anm")
+
+def anims():
+    out = []
+    os.makedirs(GFX, exist_ok=True)
+    for fn in sorted(os.listdir(GFX)):
+        if not fn.endswith(".anm"): continue
+        b = open(os.path.join(GFX, fn), "rb").read()
+        if b[:3] != b"SAN" or b[3] not in (1, 2, 3): continue
+        w, h, n, _ = struct.unpack_from("<HHHH", b, 4)
+        t0 = 20 if b[3] == 3 else 12
+        ms = sum(max(20, struct.unpack_from("<H", b, t0 + 6 * k)[0]) for k in range(n))
+        out.append({"id": fn[:-4], "full": h > w, "frames": n, "ms": ms, "bytes": len(b)})
+    return out
+
+ANIM_SPACE = 0x4B0000
+
 class H(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -62,11 +92,21 @@ class H(BaseHTTPRequestHandler):
 
     def _state(self):
         self._json({"current": state["current"], "live": state.get("live", False), "sets": state["sets"], "sizes": sizes(), "sprites": sprites(),
-                    "mp3": {"present": True, "tracks": 5, "volume": state.get("volume", 20), "error": ""}})   # a pretend module with five tracks
+                    "mp3": {"present": True, "tracks": 5, "volume": state.get("volume", 20), "error": ""},   # a pretend module with five tracks
+                    "anims": anims(), "animFree": ANIM_SPACE - sum(a["bytes"] for a in anims()), "animTotal": ANIM_SPACE,
+                    "settings": {"offDark": state.get("offDark", False), "rotate180": state.get("rotate180", False), "colourRotated": state.get("colourRotated", False)}})
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
+        if u.path == "/api/anims":
+            a = anims(); return self._json({"anims": a, "free": ANIM_SPACE - sum(x["bytes"] for x in a), "total": ANIM_SPACE})
+        if u.path.startswith("/api/anims/"):
+            p = anim_path(u.path.rsplit("/", 1)[1])
+            if not os.path.exists(p): return self.send_error(404)
+            b = open(p, "rb").read()
+            self.send_response(200); self.send_header("Content-Type", "application/octet-stream"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+            return
         if u.path == "/":
             body = page()
             self.send_response(200)
@@ -83,7 +123,7 @@ class H(BaseHTTPRequestHandler):
             else:
                 self._json(check(int(q.get("light", ["0"])[0]), text, int(q.get("size", ["0"])[0] or 0)))
         elif u.path in ("/api/preview.bmp", "/api/preview.rle"):
-            args = [f"{k}={v[0]}" for k, v in q.items() if k != "_"]
+            args = [f"{k}={v[0]}" for k, v in q.items() if k != "_"] + [f"o={1 if state.get('offDark') else 0}"]
             cmd = "rle" if u.path.endswith(".rle") else "preview"
             bmp = subprocess.run([CLI, cmd] + args, capture_output=True).stdout
             self.send_response(200)
@@ -106,7 +146,10 @@ class H(BaseHTTPRequestHandler):
                 if (o.get("k") or ["", "", ""])[i] == "off":
                     continue
                 g = (o.get("g") or ["", "", ""])[i]
-                if g:
+                if g.startswith("u:"):
+                    if not os.path.exists(anim_path(g[2:])):
+                        return f"{prefix}{name}: animation not on the sign"
+                elif g:
                     if g not in {s["id"] for s in sprites()}:
                         return f"{prefix}{name}: unknown graphic"
                     continue
@@ -159,6 +202,48 @@ class H(BaseHTTPRequestHandler):
                 state["current"] = i
                 print(f"[display] now showing set {i + 1}")
             self._state()
+        elif u.path.startswith("/api/anims/") and u.path.endswith("/rename"):
+            src = anim_id(u.path[len("/api/anims/"):-len("/rename")])
+            dst = anim_id(self._body().get("name", ""))
+            if not os.path.exists(anim_path(src)): return self._json({"error": "no such animation"}, 400)
+            if dst != src:
+                if os.path.exists(anim_path(dst)): return self._json({"error": f"there is already an animation called {dst}"}, 400)
+                os.rename(anim_path(src), anim_path(dst))
+                n = 0
+                for st in state["sets"]:
+                    for f in st.get("frames", []):
+                        g = f.get("g") or []
+                        for i, x in enumerate(g):
+                            if x == "u:" + src: g[i] = "u:" + dst; n += 1
+                save(state)
+                print(f"[anim] renamed {src} -> {dst} ({n} uses updated)")
+            a = anims(); return self._json({"anims": a, "free": ANIM_SPACE - sum(x["bytes"] for x in a)})
+        elif u.path == "/api/anims":
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            msg = email.parser.BytesParser(policy=email.policy.default).parsebytes(
+                b"Content-Type: " + self.headers.get("Content-Type", "").encode() + b"\r\n\r\n" + raw)
+            part = next((p for p in msg.iter_parts() if p.get_filename()), None) if msg.is_multipart() else None
+            data = part.get_payload(decode=True) if part else b""
+            q = urllib.parse.parse_qs(u.query)
+            name = anim_id((q.get("name") or [""])[0] or (part.get_filename() if part else ""))
+            if data[:3] != b"SAN" or data[3:4] not in (b"\x01", b"\x02", b"\x03"):
+                return self._json({"error": "not an animation file (make it with tools/anim_convert.py)"}, 400)
+            os.makedirs(GFX, exist_ok=True)
+            open(anim_path(name), "wb").write(data)
+            print(f"[anim] stored {name} ({len(data)} bytes)")
+            a = anims(); return self._json({"anims": a, "free": ANIM_SPACE - sum(x["bytes"] for x in a)})
+        elif u.path == "/api/settings":
+            b = self._body()
+            if "offDark" in b:
+                state["offDark"] = bool(b["offDark"]); save(state)
+                print(f"[settings] unlit lights {'dark' if state['offDark'] else 'dim ring'}")
+            if "colourRotated" in b:
+                state["colourRotated"] = bool(b["colourRotated"]); save(state)
+                print(f"[settings] colour wiring {'shifted' if state['colourRotated'] else 'standard'} (device would restart)")
+            if "rotate180" in b:
+                state["rotate180"] = bool(b["rotate180"]); save(state)
+                print(f"[settings] display {'rotated 180' if state['rotate180'] else 'normal'}")
+            self._state()
         elif u.path.startswith("/api/mp3/"):
             if u.path == "/api/mp3/volume":
                 state["volume"] = int(self._body().get("volume", 20)); save(state)
@@ -178,6 +263,10 @@ class H(BaseHTTPRequestHandler):
             state["live"] = False
             print("[display] live off, back to stored sets")
             return self._state()
+        if u.path.startswith("/api/anims/"):
+            p = anim_path(u.path.rsplit("/", 1)[1])
+            if os.path.exists(p): os.remove(p)
+            a = anims(); return self._json({"anims": a, "free": ANIM_SPACE - sum(x["bytes"] for x in a)})
         if u.path.startswith("/api/sets/"):
             i = int(u.path.rsplit("/", 1)[1])
             if 0 <= i < len(state["sets"]):

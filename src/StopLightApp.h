@@ -5,6 +5,7 @@
 #include "SetStore.h"
 #include "Face.h"
 #include "Mp3Player.h"
+#include "AnimStore.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -25,6 +26,19 @@ class StopLightApp {
   void setDraft(const KeyFrame& f);
   void clearDraft();
   bool hasDraft() const { return _draftActive; }
+  // Playback smoothness of uploaded animations (read with "#ANIM PERF").
+  struct PlayPerf {
+    uint32_t shown = 0, skipped = 0, late = 0;   // late: shown more than one delay after it was due
+    uint32_t maxGapMs = 0, maxLoopUs = 0, maxLockWaitUs = 0;
+  } playPerf;
+  // Diagnostics (PERF): what the current prepared frame holds.
+  String debugCurrent() const {
+    String o = "{\"draft\":" + String(_draftActive ? 1 : 0) + ",\"fullLight\":" + String(_cur->fullLight) + ",\"mask\":" + String(_cur->mask) + ",\"anims\":[";
+    for (int i = 0; i < 3; ++i) o += String(_cur->anim[i].ok() ? 1 : 0) + (i < 2 ? "," : "");
+    o += "],\"graphics\":[";
+    for (int i = 0; i < 3; ++i) o += "\"" + _draft.l[i].graphic + "\"" + (i < 2 ? "," : "");
+    return o + "]}";
+  }
   static constexpr uint32_t LIVE_TIMEOUT_MS = 60000;
   // The web task must hold this while it changes the store's sets: the
   // render core reads them while preparing frames.
@@ -38,14 +52,21 @@ class StopLightApp {
     uint8_t mask = 7;
     uint32_t ms = 1000;
     int16_t track = 0;
+    uint16_t fadeMs = 3000;
     int pos = -1;                     // playlist position it was prepared for
+    AnimInfo anim[Face::LIGHTS];      // uploaded animation per light (empty = none)
+    uint8_t animMode[Face::LIGHTS] = {0, 0, 0};
+    uint32_t animFrom[Face::LIGHTS] = {0, 0, 0}, animLen[Face::LIGHTS] = {0, 0, 0};
+    int animFrame(int i, uint32_t ms) const { return anim[i].frameIn(ms, animFrom[i], animLen[i]); }
+    int fullLight = -1;               // light whose animation fills the whole sign
   };
+  bool drawAnims(Canvas& c, const Prepared& p, uint32_t elapsedMs);   // false = an animation frame is not decoded yet
   void startAudio(const Prepared& p);
   void startSet();                                  // build the playlist, prepare frame 0
   void prepareFrame(Prepared& p, const LightDef l[3], uint8_t mask, uint32_t ms);
   void preparePos(Prepared& p, int pos);            // frame at playlist position
-  void render(const Prepared& p, uint32_t elapsedMs);
-  void renderSprites(const Prepared& p, uint32_t elapsedMs);
+  bool render(const Prepared& p, uint32_t elapsedMs);
+  bool renderSprites(const Prepared& p, uint32_t elapsedMs);
   uint32_t frameKey(const Prepared& p, uint32_t elapsedMs) const;
   Rgb2 randomColour(Rgb2 avoid);
 
@@ -62,6 +83,8 @@ class StopLightApp {
   Prepared* _cur = &_slots[0];
   Prepared* _next = &_slots[1];
   uint32_t _lastKey = 0xFFFFFFFF;
+  int _perfLastFrame = -1;
+  uint32_t _perfLastAt = 0;
   Rgb2 _recent[2] = {0, 0};           // last two random picks, never repeated
 
   KeyFrame _draft;

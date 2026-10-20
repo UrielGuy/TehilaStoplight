@@ -12,6 +12,14 @@ void lightsToJson(JsonObject o, const LightDef l[3]) {
     t.add(l[i].text); k.add(l[i].kind); g.add(l[i].graphic);
     s.add(l[i].size); c.add(l[i].bg); f.add(l[i].ink);
   }
+  if (l[0].aFrom || l[1].aFrom || l[2].aFrom || l[0].aLen || l[1].aLen || l[2].aLen) {
+    JsonArray af = o["af"].to<JsonArray>(), al = o["al"].to<JsonArray>();
+    for (int i = 0; i < 3; ++i) { af.add(l[i].aFrom); al.add(l[i].aLen); }
+  }
+  if (l[0].gmode || l[1].gmode || l[2].gmode) {
+    JsonArray gm = o["gm"].to<JsonArray>();
+    for (int i = 0; i < 3; ++i) gm.add(l[i].gmode);
+  }
 }
 
 void lightsFromJson(JsonObjectConst o, LightDef l[3]) {
@@ -22,6 +30,10 @@ void lightsFromJson(JsonObjectConst o, LightDef l[3]) {
     if (l[i].kind == "off") { l[i].text = ""; l[i].graphic = ""; }
     l[i].on = l[i].kind != "off";
     l[i].size = o["s"][i] | 0;
+    l[i].gmode = o["gm"][i] | 0; if (l[i].gmode > 2) l[i].gmode = 0;
+    l[i].aFrom = o["af"][i] | 0; l[i].aLen = o["al"][i] | 0;
+    if (l[i].aFrom > 600000) l[i].aFrom = 0;
+    if (l[i].aLen > 600000) l[i].aLen = 0;
     l[i].bg = o["c"][i] | DEF_BG[i];
     l[i].ink = o["f"][i] | 0;
     if (l[i].bg > COLOUR_RANDOM) l[i].bg = DEF_BG[i];
@@ -36,7 +48,9 @@ void frameFromJson(JsonObjectConst o, KeyFrame& f) {
   uint32_t ms = o["ms"] | 1000;
   f.ms = ms < 100 ? 100 : ms > 600000 ? 600000 : ms;
   int t = o["mp3"] | 0;
-  f.track = t < -1 ? -1 : t > 3000 ? 3000 : t;
+  f.track = t < -2 ? -2 : t > 3000 ? 3000 : t;
+  float fs = o["fade"] | 3.0f;
+  f.fadeMs = fs < 0.2f ? 200 : fs > 60 ? 60000 : (uint16_t)(fs * 1000);
 }
 
 void setToJson(JsonObject o, const TextSet& s) {
@@ -48,6 +62,7 @@ void setToJson(JsonObject o, const TextSet& s) {
     fo["m"] = f.mask();
     fo["ms"] = f.ms;
     if (f.track) fo["mp3"] = f.track;
+    if (f.track == -2) fo["fade"] = f.fadeMs / 1000.0f;
   }
   JsonArray loops = o["loops"].to<JsonArray>();
   for (const Loop& L : s.loops) {
