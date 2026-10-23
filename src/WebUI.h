@@ -1,11 +1,10 @@
 #pragma once
 #include <Arduino.h>
 #include <WebServer.h>
-#include <DNSServer.h>
 #include "SetStore.h"
 #include "SnakeDisplay.h"
 
-// WiFi access point + captive-portal web server for managing text sets.
+// Web server for managing text sets, on the access point of AccessPoint.h.
 class StopLightApp;   // owns display + store + rotation
 
 class WebUI {
@@ -35,7 +34,6 @@ class WebUI {
   const SnakeDisplay* _display = nullptr;
   SetStore& _store;
   WebServer _server;
-  DNSServer _dns;
   class BitmapCanvas* _canvas = nullptr;   // preview scratch, allocated once in begin()
   class Mp3Player* _mp3 = nullptr;
 };

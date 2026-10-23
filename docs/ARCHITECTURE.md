@@ -33,7 +33,8 @@ web page (phone)  --JSON/RLE-->  WebUI (core 0)  --sets, drafts-->  SetStore (NV
 | `AnimStore.*` | Uploaded animations in LittleFS (`/a/<id>.anm`): list (cached in RAM), load the frame table, validate an upload, paint a frame (formats 1/2 decoded on the spot; format 3 by two background decoder tasks into PSRAM frame rings, see CLAUDE.md). | no |
 | `AnimV3.*` | Portable format 3 decoder (context-model range coder): per-clip `V3Reader`, per-decoder `V3Scratch`, streaming row output. Encoder: `tools/anim_v3.py`; JS twin: `tools/anim_v3.js`. Masked clips (header flag bit 1) code only each light's circle + 2 px. | yes |
 | `SerialLink.*` | Animation upload/list/delete/read-back/rename over the UART and native USB sockets ("#ANIM" lines plus CRC-checked packets with resend), plus diagnostics (PERF, BENCH, PLAY), polled from the web task. | no |
-| `WebUI.*`, `WebPage.h` | SoftAP + captive DNS + HTTP API + the single-page UI (PROGMEM, self-contained, no external assets). | no |
+| `AccessPoint.*` | SoftAP (channel 6, 20 MHz, up to 8 clients, join/leave log), DNS that answers every A query with the AP address (AsyncUDP task, so it keeps answering while the web server is busy; EDNS queries handled), and "online" answers to the connectivity checks of Android / iOS / Windows / Firefox, so phones keep the network instead of treating it as a captive portal (no sign-in pop-up any more). | no |
+| `WebUI.*`, `WebPage.h` | HTTP API + the single-page UI (PROGMEM, self-contained, no external assets); requests for other hosts are probe answers or a redirect to the page. | no |
 | `main.cpp` | Display init, store, app, AP; web task on core 0, render loop on core 1. | no |
 
 ## Data model

@@ -8,6 +8,7 @@
 #include <Preferences.h>
 #include "AnimStore.h"
 #include "SerialLink.h"
+#include "AccessPoint.h"
 
 // StopLight: three circles with text or figures on a 128x384 HUB75 chain,
 // managed from a captive-portal web page on the ESP32's own access point.
@@ -168,7 +169,7 @@ void setup() {
   // Two cores, two jobs: the web server (and captive DNS) runs on core 0 next
   // to the WiFi stack; frame rendering owns core 1 through the Arduino loop.
   xTaskCreatePinnedToCore([](void*) {
-    for (;;) { web.loop(); uartLink.poll(); usbLink.poll(); vTaskDelay(pdMS_TO_TICKS(2)); }
+    for (;;) { AccessPoint::webTick(); web.loop(); uartLink.poll(); usbLink.poll(); vTaskDelay(pdMS_TO_TICKS(2)); }
   }, "web", 16 * 1024, nullptr, 1, nullptr, 0);
 }
 
@@ -177,6 +178,7 @@ void loop() {   // core 1: rendering, plus the MP3 module's replies
   static bool reported = false;
   if (!reported && mp3.present()) { reported = true; Serial.printf("[mp3] module present, %u tracks on the card, volume %u\n", mp3.trackCount(), mp3.volume()); }
   app.loop();
+  AccessPoint::healthLog();   // one status line a minute on the serial log
   delay(2);
 }
 #endif  // MP3_TEST

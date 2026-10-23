@@ -313,8 +313,10 @@ view with the Read tool.
   `second` figure and extra `shapes` for props such as the bike). Both
   generators need Pillow under WSL `python3`; `SHEET_DIR=<dir>` writes the
   contact sheet `sprites.png` there (view it with the Read tool).
-- Rendering runs on **core 1** (Arduino `loop()`), the web server + captive
-  DNS in a task on **core 0**. `StopLightApp::loop()` holds a recursive mutex
+- Rendering runs on **core 1** (Arduino `loop()`), the web server in a task
+  on **core 0** (DNS answers from the AsyncUDP task, `AccessPoint.*`; phones'
+  connectivity checks get "online", not a captive-portal redirect, since
+  2026-10-23). `StopLightApp::loop()` holds a recursive mutex
   for its whole pass because web handlers (add/edit/show/delete) rebuild the
   prepared frames through `renderCurrent()`; a set added while another played
   crashed the device before that (2026-09-28). Live drafts are only stored by

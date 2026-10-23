@@ -8,19 +8,12 @@
 #include <Preferences.h>
 #include <LittleFS.h>
 #include "AnimStore.h"
+#include "AccessPoint.h"
 #include <vector>
-
-static const byte DNS_PORT = 53;
 
 void WebUI::begin(const char* ssid, const char* password) {
   _canvas = new BitmapCanvas();   // 24 KB, kept for the life of the server
-  WiFi.mode(WIFI_AP);
-  // Channel 6, visible SSID, up to 4 clients: channel 1 (the default) is
-  // occasionally hidden by phones that filter overlapping networks.
-  WiFi.softAP(ssid, password, 6, 0, 4);
-  delay(100);
-  _dns.setErrorReplyCode(DNSReplyCode::NoError);
-  _dns.start(DNS_PORT, "*", WiFi.softAPIP());
+  AccessPoint::begin(ssid, password);   // WiFi + DNS for every name, see AccessPoint.h
 
   _server.on("/", HTTP_GET, [this] {
     _server.sendHeader("Cache-Control", "no-store");
@@ -132,16 +125,17 @@ void WebUI::begin(const char* ssid, const char* password) {
 }
 
 void WebUI::loop() {
-  _dns.processNextRequest();
   _server.handleClient();
 }
 
-// Phones and laptops probe these URLs to detect a captive portal; answering
-// with a redirect makes them pop the page up on connect.
+// A request for another host: the connectivity checks of phones and laptops
+// get the "online" answer (AccessPoint.h says why), anything else a redirect
+// to the page, so any http:// address typed in the browser lands here.
 bool WebUI::captiveRedirect() {
   const String host = _server.hostHeader();
   const String ip = WiFi.softAPIP().toString();
   if (host == ip) return false;
+  if (AccessPoint::answerProbe(_server)) return true;
   _server.sendHeader("Location", "http://" + ip + "/", true);
   _server.send(302, "text/plain", "");
   return true;
