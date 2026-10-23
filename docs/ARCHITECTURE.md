@@ -60,10 +60,18 @@ Light arrays are always indexed top, middle, bottom.
     // "af"/"al": play only [af, af+al) ms of the clip, al 0 = to the end.
     // A 128x384 animation on any light fills the whole sign for that frame.
     // Beat animations: g = "fx:quarters" (circle colour + "q":[[a,b,c],..] quarters 2-4, clockwise
-    // from the top left, moving one quarter clockwise per beat) or "fx:pulse" (75% disc, full size on
-    // the beat, easing back). "hc"/"hf": degrees the circle / ink colour turns per beat (any light).
-    // The beat grid starts with the set and again at each frame that starts a track; hue jumps and
-    // quarters count beats from their frame's start (Face::Beat).
+    // from the top left, turning 30 degrees clockwise per beat), "fx:pulse" (75% disc, full size on
+    // the beat, easing back), "fx:wave" (ink line bent into a sine period, swinging on the beat: left up
+    // on beat 1, 3..., flat mid-beat, left down on beat 2, 4...), "fx:clock" (watch face in ink,
+    // 12:00 at the frame's start, 5 minutes per beat), "fx:ecg" (heart monitor trace scrolling
+    // right to left, its spike at the centre on every beat), "fx:ecgsweep" (the trace standing still,
+    // revealed by a window sweeping left to right), "fx:heart" (heart in the circle colour, full on the
+    // beat), "fx:ripples" (a ring from the centre per beat), "fx:eq" (7 rainbow equaliser bars),
+    // "fx:chase" (12 bulbs, one more per beat), "fx:ball" (bouncing, lands on the beat), "fx:sparkle"
+    // (twinkles on time, not the beat), "fx:fillv" / "fx:fillx" (lines appearing on the beats, full
+    // 100 ms before the frame ends: they use the frame's "ms"). "hc"/"hf": degrees the circle / ink
+    // colour turns per beat (any light). The beat grid starts with the set and again at each frame that
+    // starts a track; effects count beats from their frame's start (Face::Beat).
    ...],
  "loops":[{"from":6,"to":10,"count":10},  // loop sections, 1-based inclusive, non-overlapping
           {"from":12,"to":14,"count":4}]}
@@ -85,13 +93,13 @@ JSON (`SetStore::MAX_JSON_BYTES`), 40 sets, 64 frames and 16 loops per set.
 | `GET /` | the page |
 | `GET /api/state` | `{current, frame, live, heap, heapMin, heapBlock, sets, sizes, sprites, mp3, settings:{offDark}}` (`frame` = 0-based frame being shown) |
 | `GET /api/check?text=&light=&size=` | `{ok,size,lines,maxFit}` or `{ok:false,error,maxFit}` |
-| `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&k0..k2&m=&k=` | RLE frame (`kN=off` = light dark, `m` lit mask, `k` elapsed ms for sprite frames; beat animations: `qN=a,b,c`, `hcN`/`hfN`, `bpm`, `b` = ms on the beat grid, default `k`; the page leaves `bpm` out and paints the beat itself, see CLAUDE.md). Unlit lights follow the stored `offDark` setting; `stopcli` and the harness take it as `o=1` |
+| `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&k0..k2&m=&k=` | RLE frame (`kN=off` = light dark, `m` lit mask, `k` elapsed ms for sprite frames; beat animations: `qN=a,b,c`, `hcN`/`hfN`, `bpm`, `b` = ms on the beat grid, default `k`, `fl` = the frame's length for the fills; the page leaves `bpm` out and paints the beat itself, see CLAUDE.md). Unlit lights follow the stored `offDark` setting; `stopcli` and the harness take it as `o=1` |
 | `GET /api/preview.bmp?...` | same as 4-bpp BMP |
 | `POST /api/sets` (set JSON) | add; 400 with reason if a text does not fit or storage is full |
 | `PUT /api/sets/{i}` (set JSON) | replace set i (the page's Edit) |
 | `DELETE /api/sets/{i}` | remove |
 | `POST /api/show/{i}` | show now, restart timer |
-| `POST /api/live` (frame JSON: t,k,g,s,c,f,m) / `DELETE /api/live` | show a draft frame on the LEDs without saving / back to sets (auto-clears after 60 s idle) |
+| `POST /api/live` (frame JSON: t,k,g,s,c,f,m, bpm, ms) / `DELETE /api/live` | show a draft frame on the LEDs without saving / back to sets (auto-clears after 60 s idle); the draft repeats every `ms` (its beat grid and fills start over) |
 | `POST /api/settings {offDark:bool, rotate180:bool}` | global settings, each optional: `offDark` = unlit light completely dark instead of a dim outline ring (NVS `offdark`, `Face::setOffDark`); `rotate180` = whole image rotated 180° for a sign hung the other way up (NVS `rot180`, default true since 2026-10-19, `SnakeDisplay::setRotated`, applied in `mapToChain`); `colourRotated` = panels whose colour inputs are shifted one step (NVS `colrot`, default true since 2026-10-19, `Options::colourRotated` swaps the R/G/B pins at init), so the device replies `{restart:true}` and restarts. The other two redraw at once |
 | `GET /api/anims` | `{anims:[{id,full,frames,ms,bytes}], free, total}` (also `anims`/`animFree`/`animTotal` in `/api/state`) |
 | `POST /api/anims?name=` (multipart file) | store an .anm (validated, written to `/a/.upload`, renamed under the playback lock) |

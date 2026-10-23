@@ -2,7 +2,10 @@
 """Check the page's beat-animation preview (WebPage.h: hueTurn, beatOf,
 pulseD, paintBeat) against the C++ that drives the LEDs (Face::drawLight
 via tools/stopcli): for each case the page paints the beat over the server's
-image of the frame's start, which must equal stopcli's image at that moment.
+image of the frame's start, which must equal stopcli's image at that moment
+(stopcli raw: all 64 colours, as on the LEDs; the RLE preview keeps 16).
+The row-painted effects (NEW_FX) each get their own cases: several beats and
+phases, bpm 0, hue jumps, ink == circle colour, black circles, frame lengths.
 
     python3 tools/beat_jstest.py        # WSL; needs Windows Node (node.exe)
 
@@ -19,8 +22,24 @@ LIGHTS = [   # (page light, extra server args)
     [{"k": "short", "t": "STOP", "c": 48, "f": 0, "hc": 30}, {"k": "fx:quarters", "c": 48, "f": 0, "q": [60, 12, 3]}, {"k": "fx:pulse", "c": 12, "f": 0, "hc": 20}],
     [{"k": "short", "t": "GO", "c": 0, "f": 51, "hf": -40}, {"k": "fx:pulse", "c": 63, "f": 0}, {"k": "fx:quarters", "c": 53, "f": 0, "hc": -70, "q": [15, 0, 28]}],
     [{"k": "dancing", "c": 52, "f": 3, "hc": 50, "hf": 10}, {"k": "short", "t": "המתן", "c": 21, "f": 21, "hc": 90}, {"k": "fx:pulse", "c": 22, "f": 0, "hc": 359}],
+    [{"k": "fx:wave", "c": 48, "f": 63}, {"k": "fx:wave", "c": 0, "f": 0, "hc": 30, "hf": 60}, {"k": "fx:wave", "c": 12, "f": 12, "hf": -90}],
+    [{"k": "fx:clock", "c": 0, "f": 63}, {"k": "fx:clock", "c": 48, "f": 48, "hf": 60}, {"k": "fx:clock", "c": 12, "f": 0, "hc": 90}],
+    [{"k": "fx:ecg", "c": 48, "f": 0}, {"k": "fx:ecg", "c": 0, "f": 0, "hc": 45, "hf": 30}, {"k": "fx:clock", "c": 3, "f": 60, "hf": 90}],
+    [{"k": "fx:ecg", "c": 12, "f": 63, "hc": -60}, {"k": "fx:wave", "c": 63, "f": 63}, {"k": "fx:ecg", "c": 21, "f": 42}],
 ]
-TIMES = [(120, 0, 0), (120, 1, 1), (120, 499, 499), (120, 500, 500), (120, 1250, 1250), (97, 5000, 1234), (240, 61000, 300), (60, 3999, 3999), (400, 777777, 12345)]
+# The row-painted effects (fx:heart and later): every one on its own, with ink == base, black circles and hue
+# jumps, at many moments: (bpm, grid ms, frame ms, frame length ms). bpm 0 and the fills' end are in there too.
+NEW_FX = ["fx:heart", "fx:ripples", "fx:eq", "fx:chase", "fx:ball", "fx:sparkle", "fx:fillv", "fx:fillx", "fx:ecg", "fx:ecgsweep"]
+NEW_LIGHTS = [[{"k": fx, "c": 48, "f": 0}, {"k": fx, "c": 0, "f": 63, "hc": 30, "hf": 45}, {"k": fx, "c": 12, "f": 12, "hf": -90}] for fx in NEW_FX] + \
+             [[{"k": fx, "c": 63, "f": 3, "hc": 120}, {"k": fx, "c": 21, "f": 60}, {"k": fx, "c": 0, "f": 0}] for fx in NEW_FX]
+NEW_TIMES = [(120, 0, 0, 2000), (120, 1, 1, 2000), (120, 60, 60, 2000), (120, 125, 125, 2000), (120, 250, 250, 2000), (120, 499, 499, 2000),
+             (120, 500, 500, 2000), (120, 520, 520, 2000), (120, 760, 760, 2000), (120, 1250, 1250, 2000), (120, 1899, 1899, 2000),
+             (120, 1900, 1900, 2000), (120, 1950, 1950, 2000), (120, 2100, 1600, 2000), (97, 5000, 1234, 3000), (60, 3999, 3999, 4000),
+             (400, 777777, 12345, 20000), (133, 9000, 8000, 8100), (133, 9000, 8000, 8000), (90, 700, 700, 650), (0, 0, 0, 1000),
+             (0, 555, 555, 1000), (0, 950, 950, 1000), (0, 12345, 12345, 0), (120, 40000, 40000, 60000), (240, 61000, 300, 1000),
+             (60, 7040, 7040, 30000), (180, 123456, 23456, 25000)]
+TIMES = [(120, 0, 0), (120, 1, 1), (120, 125, 125), (120, 250, 250), (120, 375, 375), (120, 499, 499), (120, 500, 500), (120, 1250, 1250),
+         (120, 2100, 1600), (120, 1530, 1530), (120, 1560, 1560), (120, 36100, 36100), (60, 143200, 143200), (60, 300000, 150050), (97, 5000, 1234), (240, 61000, 300), (60, 3999, 3999), (400, 777777, 12345)]
 
 
 def args_for(L, mask=7):
@@ -34,22 +53,23 @@ def args_for(L, mask=7):
     return a
 
 
-def rle(args):
-    return subprocess.run([CLI, "rle"] + args, capture_output=True, check=True).stdout
+def rle(args, cmd="rle"):
+    return subprocess.run([CLI, cmd] + args, capture_output=True, check=True).stdout
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
     cases = []
-    for n, L in enumerate(LIGHTS):
+    runs = [(L, [(b, g, f, 2000) for b, g, f in TIMES]) for L in LIGHTS] + [(L, NEW_TIMES) for L in NEW_LIGHTS]
+    for L, times in runs:
         for mask in (7, 5):
-            for bpm, grid, frame in TIMES:
-                base = args_for(L, mask) + [f"k={frame}"]
+            for bpm, grid, frame, flen in times:
+                base = args_for(L, mask) + [f"k={frame}", f"fl={flen}"]
                 beat = base + [f"bpm={bpm}", f"b={grid}"] + [f"hc{i}={l.get('hc', 0)}" for i, l in enumerate(L)] + [f"hf{i}={l.get('hf', 0)}" for i, l in enumerate(L)]
                 stem = f"c{len(cases)}"
                 open(os.path.join(OUT, stem + ".base"), "wb").write(rle(base))
-                open(os.path.join(OUT, stem + ".want"), "wb").write(rle(beat))
-                cases.append({"stem": stem, "L": L, "m": mask, "bpm": bpm, "grid": grid, "frame": frame})
+                open(os.path.join(OUT, stem + ".want"), "wb").write(rle(beat, "raw"))   # all 64 colours: the preview's RLE keeps 16
+                cases.append({"stem": stem, "L": L, "m": mask, "bpm": bpm, "grid": grid, "frame": frame, "fl": flen})
     json.dump(cases, open(os.path.join(OUT, "cases.json"), "w"))
     src = open(os.path.join(ROOT, "src", "WebPage.h"), encoding="utf-8").read()
     open(os.path.join(OUT, "page.js"), "w", encoding="utf-8").write(re.search(r"<script>(.*)</script>", src, re.S).group(1))
@@ -68,10 +88,11 @@ function decode(b){const w=b[2]|(b[3]<<8),h=b[4]|(b[5]<<8),n=b[6],pal=[];for(let
  while(o+1<b.length){const v=b[o]|(b[o+1]<<8);o+=2;const c=pal[v>>12];let len=v&4095;while(len--&&p<d.length){d[p++]=c[0];d[p++]=c[1];d[p++]=c[2];d[p++]=255}}return d}
 const cases=JSON.parse(fs.readFileSync(path.join(dir,'cases.json'),'utf8'));let bad=0;
 ctx.__cases=cases;
-for(const c of cases){buf=decode(fs.readFileSync(path.join(dir,c.stem+'.base')));const want=decode(fs.readFileSync(path.join(dir,c.stem+'.want')));
- ctx.__c=c;vm.runInContext("rolls={};ed.bpm=__c.bpm;paintBeat({L:__c.L,m:__c.m,fi:0},beatOf(__c.bpm,__c.grid,__c.frame))",ctx);
+const pv=vm.runInContext('pvRgb',ctx),decodeRaw=b=>{const d=new Uint8ClampedArray(b.length*4);for(let i=0;i<b.length;i++){const c=pv(b[i]);d.set([c[0],c[1],c[2],255],i*4)}return d};
+for(const c of cases){buf=decode(fs.readFileSync(path.join(dir,c.stem+'.base')));const want=decodeRaw(fs.readFileSync(path.join(dir,c.stem+'.want')));
+ ctx.__c=c;vm.runInContext("rolls={};ed.bpm=__c.bpm;paintBeat({L:__c.L,m:__c.m,fi:0},beatOf(__c.bpm,__c.grid,__c.frame,__c.fl))",ctx);
  let diff=0,first=-1;for(let i=0;i<want.length;i+=4)if(buf[i]!==want[i]||buf[i+1]!==want[i+1]||buf[i+2]!==want[i+2]){diff++;if(first<0)first=i/4}
- if(diff){bad++;console.log(c.stem,'bpm',c.bpm,'grid',c.grid,'frame',c.frame,'mask',c.m,':',diff,'pixels differ, first at x',first%128,'y',Math.floor(first/128))}}
+ if(diff){bad++;console.log(c.stem,c.L.map(l=>l.k).join('/'),'bpm',c.bpm,'grid',c.grid,'frame',c.frame,'fl',c.fl,'mask',c.m,':',diff,'pixels differ, first at x',first%128,'y',Math.floor(first/128))}}
 console.log(cases.length+' cases, '+bad+' with differences');process.exit(bad?1:0);
 """
     open(os.path.join(OUT, "harness.js"), "w").write(harness)

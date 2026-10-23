@@ -16,6 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(ROOT, "tools", "stopcli")
+FX_IDS = {"fx:quarters", "fx:pulse", "fx:wave", "fx:clock", "fx:ecg", "fx:heart", "fx:ripples", "fx:eq", "fx:chase",
+          "fx:ball", "fx:sparkle", "fx:fillv", "fx:fillx", "fx:ecgsweep"}   # Face.cpp FX_IDS
 STORE = os.environ.get("STOPLIGHT_SETS") or os.path.join(ROOT, "tools", "local_sets.json")   # another file: a second fake sign (tests)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 MAX_TEXT_BYTES = 720
@@ -150,7 +152,7 @@ class H(BaseHTTPRequestHandler):
                     if not os.path.exists(anim_path(g[2:])):
                         return f"{prefix}{name}: animation not on the sign"
                 elif g:
-                    if g not in {s["id"] for s in sprites()} | {"fx:quarters", "fx:pulse"}:
+                    if g not in {s["id"] for s in sprites()} | FX_IDS:
                         return f"{prefix}{name}: unknown graphic"
                     continue
                 t = str((o.get("t") or ["", "", ""])[i]).strip()

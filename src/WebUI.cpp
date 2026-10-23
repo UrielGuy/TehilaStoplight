@@ -125,7 +125,7 @@ void WebUI::begin(const char* ssid, const char* password) {
 }
 
 void WebUI::loop() {
-  _server.handleClient();
+  _server.loopOnce();
 }
 
 // A request for another host: the connectivity checks of phones and laptops
@@ -236,6 +236,7 @@ void WebUI::handlePreview(bool rle) {
   beat.bpm = _server.arg("bpm").toInt();
   beat.frameMs = k;
   beat.gridMs = _server.hasArg("b") ? (uint32_t)_server.arg("b").toInt() : k;
+  beat.frameLen = _server.arg("fl").toInt();   // the frame's length (fills)
   BitmapCanvas* canvas = _canvas;      // only the web task uses it
   canvas->reset();                     // fresh palette for every image
   Face::draw(*canvas, specs, mask, k, beat);

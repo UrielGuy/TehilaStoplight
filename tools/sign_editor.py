@@ -43,7 +43,7 @@ ANIM_SPACE = 0x4B0000          # the LittleFS partition (partitions.csv)
 BLOCK = 4096                   # LittleFS block: a file takes whole blocks
 MARGIN = 8192                  # an upload needs this much more room than the file (as the studio and the plan check)
 MAX_TEXT_BYTES = 720
-FX = {"fx:quarters", "fx:pulse"}
+FX = {"fx:quarters", "fx:pulse", "fx:wave", "fx:clock"}
 
 
 # ======================================================================= renderer

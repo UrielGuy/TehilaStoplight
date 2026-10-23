@@ -126,11 +126,16 @@ def main():
     queries.append(["k0=off", "k1=off", "t0=STOP", "t1=GO", "t2=BYE", "k2=on"])
     queries.append(["g0=nosuch", "t0=STOP", "g1=fx:nosuch"])
     queries.append(["t0=STOP", "t0=GO"])   # first one wins
+    for ms in range(0, 6001, 41):   # beat animations through several beats: wave swing, quarters turning, clock ticks
+        queries.append(["g0=fx:wave", "g1=fx:quarters", "q1=60,12,3", "g2=fx:wave", "c2=0", "f2=0", "hc0=30",
+                        "bpm=120", f"k={ms}", f"b={ms + 1000}"])
+        queries.append(["g0=fx:clock", "c0=0", "f0=63", "g1=fx:clock", "c1=48", "f1=48", "hf1=60", "g2=fx:clock",
+                        "c2=12", "hc2=90", "bpm=97", f"k={ms * 13}", f"b={ms * 13 + 333}"])
     bpms = [0, 1, 60, 90, 120, 128, 140, 180, 300, 65536 + 120, -5]
     for _ in range(60 if a.quick else 400):
         q = []
         for i in range(3):
-            kind = rng.choice(["fx:quarters", "fx:pulse", "text", "sprite", "none"])
+            kind = rng.choice(["fx:quarters", "fx:pulse", "fx:wave", "fx:clock", "text", "sprite", "none"])   # not fx:ecg: the Python port is frozen without it (CLAUDE.md)
             if kind.startswith("fx"):
                 q.append(f"g{i}={kind}")
                 if rng.random() < 0.7:

@@ -28,11 +28,23 @@ int fontSizeCount();
 int fontSize(int index);
 // Beat animations, picked in a light's graphic list like the figures.
 // FX_QUARTERS splits the circle in four colours (bg, then quarters[0..2],
-// clockwise from the top left) that move one quarter clockwise on every
+// clockwise from the top left) that turn 30 degrees clockwise on every
 // beat; FX_PULSE is a disc at 75% of the circle that jumps to full size on
-// every beat and shrinks back during the beat.
-enum : uint8_t { FX_NONE = 0, FX_QUARTERS = 1, FX_PULSE = 2 };
-uint8_t effectById(const std::string& id);   // "fx:quarters" / "fx:pulse", else FX_NONE
+// every beat and shrinks back during the beat; FX_WAVE is a horizontal line
+// in the ink colour bent into one sine period that swings on the beat: full
+// (left up, right down) on beat 1, 3, 5..., flat mid-beat, full the other way
+// on beat 2, 4...; FX_CLOCK is a watch face that starts at 12:00 and
+// gains 5 minutes on every beat; FX_ECG is a heart monitor trace scrolling
+// right to left, its spike at the centre on every beat (all in the ink colour);
+// FX_ECGSWEEP keeps the trace still and shows it through a window sweeping
+// left to right that reaches the spike on the beat.
+// Then (Face.cpp, RowFx): a beating heart, ripples, an equaliser, chasing
+// lights, a bouncing ball, sparkles (on time, not the beat) and two fills
+// that complete 100 ms before the frame ends (Beat::frameLen).
+enum : uint8_t { FX_NONE = 0, FX_QUARTERS = 1, FX_PULSE = 2, FX_WAVE = 3, FX_CLOCK = 4, FX_ECG = 5,
+                 FX_HEART = 6, FX_RIPPLES = 7, FX_EQ = 8, FX_CHASE = 9, FX_BALL = 10, FX_SPARKLE = 11,
+                 FX_FILLV = 12, FX_FILLX = 13, FX_ECGSWEEP = 14 };
+uint8_t effectById(const std::string& id);   // "fx:quarters", "fx:pulse"... (see Face.cpp), else FX_NONE
 
 // Where the sign is on the beat (the set's tempo). The grid starts with the
 // set and again at every frame that starts a sound track, so it follows the
@@ -41,6 +53,7 @@ struct Beat {
   uint16_t bpm = 0;       // 0 = no beat: everything holds still
   uint32_t gridMs = 0;    // time since the grid started
   uint32_t frameMs = 0;   // time since this frame started (<= gridMs)
+  uint32_t frameLen = 0;  // the frame's length (fills finish 100 ms before it ends; 0 = unknown: filled)
   uint32_t steps() const {   // beats since the frame started
     if (!bpm) return 0;
     const uint32_t start = gridMs >= frameMs ? gridMs - frameMs : 0;
@@ -66,7 +79,7 @@ struct LightSpec {
 Rgb2 beatBg(const LightSpec& s, const Beat& b);
 Rgb2 beatFg(const LightSpec& s, const Beat& b);
 // Changes whenever the beat changes how a light looks (hue jumps, quarters,
-// pulse size): the render loop redraws that light then.
+// pulse size, wave amplitude, clock hands, ECG scroll): the render loop redraws that light then.
 uint32_t beatState(const LightSpec& s, bool lit, const Beat& b);
 
 // Global look of an unlit light: a dim ring (default) or completely dark.

@@ -68,18 +68,63 @@ real address). Commit only when the user asks.
 - Beat animations (2026-10-23), drawn by the board: a set has a tempo
   (`bpm`, default 120); any colour can jump its hue N degrees per beat
   (`hc`/`hf` per light, palette popup "Hue jump"; `rgb2Hue` in Canvas.h is
-  integer maths, 18 hues at full brightness); graphics `fx:quarters` (4
-  colours turning clockwise per beat, `q` = quarters 2-4) and `fx:pulse`
-  (75% disc, full size on the beat, easing back by 7/8 of the beat). The
-  beat grid starts with the set and restarts at a frame that starts an MP3
-  track (follows the song); hue jumps / quarters count beats since their
-  frame started (`Face::Beat`). `Face::drawLight` now composes whole rows
-  (text via `drawLayoutRow`, sprites clipped to the circle) so a per-beat
-  redraw never flickers; `StopLightApp::loop` redraws only the lights whose
-  `Face::beatState` changed (`renderBeat`). The page paints the beat over
-  the server's start image client-side (`paintBeat`, a mirror of the C++:
-  keep in step); `python3 tools/beat_jstest.py` (needs Windows node.exe)
-  checks it pixel for pixel against `stopcli`.
+  integer maths, 18 hues at full brightness). The beat grid starts with the
+  set and restarts at a frame that starts an MP3 track (follows the song);
+  effects count beats since their frame started (`Face::Beat`: bpm, gridMs,
+  frameMs, and `frameLen` = the frame's length, for the fills; a live draft
+  repeats its frame with its own length, as the page's one-frame preview
+  does). Graphics (`effectById`, `FX_IDS` in Face.cpp), all integer maths:
+  - `fx:quarters`: 4 colours turning 30° clockwise per beat (`q` = quarters
+    2-4; `sector()` picks the twelfth with integer tests).
+  - `fx:pulse`: 75% disc, full size on the beat, easing back by 7/8 beat.
+  - `fx:wave`: a 6 px ink line bent into one sine period, amplitude 26 px ×
+    cos over the beat, sign flipping per beat (left up on beat 1, 3…).
+    `SIN_Q` (65-entry quarter wave, 256 steps a turn) is copied literally
+    into the page and stoplight_render.py.
+  - `fx:clock`: a watch face in ink (bezel, 12 marks, tapered hands, hub),
+    12:00 at the frame's start, 5 minutes a beat, quartz-tick ease over 1/8
+    beat; `sin720` interpolates `SIN_Q` for half degrees. (A Dali "melting"
+    version was tried and dropped, the user preferred this one.)
+  - `fx:ecg`: a heart monitor trace (`ECG`, 128 entries = one PQRST complex,
+    35 px R spike) scrolling right to left, one circle width per beat, the
+    spike on the centre columns on every beat. Each column's run reaches
+    half way to its neighbours so steep edges stay connected.
+  - `fx:ecgsweep`: the same trace standing still, seen through a 64 px
+    window sweeping left to right (wrapping) whose leading edge reaches the
+    spike on the beat; its oldest 16 px in the dim ink.
+  - Row-painted ones (`RowFx`: `rowFxPrepare` once per draw, `rowFxRow` per
+    row; `mix32` hash for anything "random"): `fx:heart` (a heart in the
+    circle colour on black, full on the beat, easing to 80% like the pulse;
+    square-on-its-corner + two discs), `fx:ripples` (a ring from the centre
+    every beat, 2.5 beats to the rim, 5 -> 3 px, oldest part dim),
+    `fx:eq` (7 rainbow bars of LED segments on black inside a rim of the
+    circle colour; heights from a hash of beat and bar, falling back to one
+    segment, peak segment stays), `fx:chase` (12 bulbs, one more lit per beat
+    clockwise from 12, then all off; unlit = dim ink, or dim circle colour
+    for an ink with no bright level), `fx:ball` (a ball landing on a floor
+    line on every beat, squashed while on the floor ±5% of a beat, parabola
+    up to the top mid-beat), `fx:sparkle` (not tied to the beat: 20 slots of
+    twinkles from a hash of light, slot and time, 40 ms steps, multi-coloured
+    from a fixed bright palette never equal to the circle colour, ink hue
+    jumps turn them), `fx:fillv` / `fx:fillx` (2 px lines in a fixed shuffle,
+    vertical / vertical + horizontal: with N beat-grid moments in [frame
+    start, frameLen - 100 ms], a beat on the frame start included, the k-th
+    shows ceil(L k / N) of the L lines at once, the last beat completes it;
+    more beats than lines: 1 + (L-1)(k-1)/(N-1); no beat in there or bpm 0:
+    all at frameLen - 100 ms).
+  `Face::drawLight` composes whole rows (text via `drawLayoutRow`, sprites
+  clipped to the circle) so a per-beat redraw never flickers;
+  `StopLightApp::loop` redraws only the lights whose `Face::beatState`
+  changed (`renderBeat`; sparkles and fills also change without a beat). The
+  page paints the effects over the server's start image client-side
+  (`paintBeat`; the row-painted ones through `rowFxPrep` / `rowFxRow`, a
+  mirror of the C++: keep in step); `python3 tools/beat_jstest.py` (needs
+  Windows node.exe) checks it pixel for pixel against `stopcli raw` (1372
+  cases, every effect at many phases, bpm values, hue jumps, ink == circle
+  colour, frame lengths). The preview's RLE/BMP keep only 16 colours (more
+  draw black: sparkles + hue jumps can get there); the LEDs and the page's
+  painting show all 64. PC timing (2000 draws, -O2): 9-27 µs per light for
+  the new effects, plain circle 19, clock 57.
 - Uploaded animations (2026-10-19): `tools/anim_studio.py` (Windows Python,
   http://localhost:8090/; since 2026-10-23 also built into the offline
   editor as its "New animation" card, see that section) opens a GIF, a video or a YouTube link (yt-dlp,
@@ -254,6 +299,13 @@ workspace. The cards are injected at serve time from
 `mp3Options`, `render` and `fetch`; no WebPage.h change). Needs numpy
 (+ pyserial for the cable); the New animation card also imageio-ffmpeg,
 and yt-dlp for links.
+**Frozen since 2026-10-23** at the user's request ("I doubt we'll actually
+use it"): the editor, `tools/stoplight_render.py`, `sign_editor_inject.html`
+and `sign_link.py` get no further updates. The port knows fx:wave, the 30°
+quarters and fx:clock (all covered by render_parity_test) but not fx:ecg
+or any effect added later (ecgsweep, heart, ripples, eq, chase, ball,
+sparkle, fillv, fillx): the editor rejects them as unknown graphics and the
+parity test leaves them out.
 - Workspace (git-ignored `tools/gfx/editor/`): `workspace.json` (sets,
   settings, volume, music folder, target), `anims/`, `board.json` (what the
   sign had at the last download / upload: sizes, CRC32s, sets, settings),
@@ -408,6 +460,35 @@ UART with a long-running pyserial script started *before* the test and stop
 it before flashing (only one process can hold the COM port; a stale
 `python3.13` process holding it must be killed with `Stop-Process`).
 
+**WiFi notes (2026-10-23 evening).** Phones could join the AP but not open
+http://192.168.4.1 (timeouts, then ERR_CONNECTION_REFUSED) while laptops could.
+Findings and fixes, all verified on the sign:
+- The Arduino WebServer serves one connection at a time and waits 5 s
+  (`HTTP_MAX_DATA_WAIT`, not overridable) for a connection to send its
+  request; phones open spare connections early, each stalled the server 5 s.
+  `SignWebServer` (WebUI.h) now keeps up to 8 connections in a pool and
+  serves whichever has sent a request; idle ones close after 20 s, or the
+  quietest when the pool is full. (A first fix that closed idle connections
+  after 250 ms refused the phones' requests: do not go back to that.)
+- Answering phones' connectivity checks with "online" (the WiFi agent's
+  change that morning) broke phones; the captive-portal redirect (the old
+  behaviour) is the default again. `#ANIM PROBES online|captive` flips it until
+  the next restart.
+- `AnimStore::freeBytes/totalBytes` are cached: LittleFS `usedBytes()` walks
+  the whole file system (~0.5 s) and ran on every `/api/state` poll.
+- The page no longer re-fetches a missing animation on every preview tick
+  (30 s back-off after a 404).
+- Cable debugging: `#ANIM WEBLOG 1` logs every request (client, host, path,
+  time, wait) and every DHCP lease to the serial log; `#ANIM STA <ssid>
+  <password>` also joins another network (not saved, a restart forgets it) so
+  the PC can reach the web server there; `#ANIM STA` = status, `STA OFF`.
+  The password goes over the cable only; read it from Windows' saved profile
+  (`netsh wlan show profile name=X key=clear`) and never print it.
+- Do not run two `pio run -e s3` at once into `.pio/build` (a subagent's build
+  and the lead's collided and left a broken firmware.elf); agents build with
+  `PLATFORMIO_BUILD_DIR=<scratch dir>`. Flash only after the build printed
+  SUCCESS.
+
 ## Local harness (no hardware needed)
 
 ```
@@ -423,7 +504,10 @@ it matches the calling shell.
 
 `tools/stopcli` subcommands: `sizes`, `sprites`,
 `check <light> <text> [maxSize]`, and `preview|rle|ppm key=value...` (keys are
-the web API query keys, e.g. `t0=STOP g2=dancing k=440 c0=3 f0=63 m=7`).
+the web API query keys, e.g. `t0=STOP g2=dancing k=440 c0=3 f0=63 m=7`; beat
+keys `bpm`, `b` grid ms, `fl` frame length). `ppmfull` / `raw` are the same
+image with all 64 colours (the others go through the 16-colour preview
+canvas).
 To eyeball a layout: `stopcli ppm ... > x.ppm`, convert to PNG with Pillow,
 view with the Read tool.
 
@@ -453,8 +537,8 @@ view with the Read tool.
   contact sheet `sprites.png` there (view it with the Read tool).
 - Rendering runs on **core 1** (Arduino `loop()`), the web server in a task
   on **core 0** (DNS answers from the AsyncUDP task, `AccessPoint.*`; phones'
-  connectivity checks get "online", not a captive-portal redirect, since
-  2026-10-23). `StopLightApp::loop()` holds a recursive mutex
+  connectivity checks get the captive-portal redirect to the page, see the
+  WiFi notes below). `StopLightApp::loop()` holds a recursive mutex
   for its whole pass because web handlers (add/edit/show/delete) rebuild the
   prepared frames through `renderCurrent()`; a set added while another played
   crashed the device before that (2026-09-28). Live drafts are only stored by

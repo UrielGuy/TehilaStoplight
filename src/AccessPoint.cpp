@@ -72,6 +72,10 @@ void AccessPoint::begin(const char* ssid, const char* password) {
                   m[0], m[1], m[2], m[3], m[4], m[5], WiFi.softAPgetStationNum(), ESP.getFreeHeap());
   }, ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
 
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+    if (webLog()) Serial.printf("[wifi] gave out " IPSTR "\n", IP2STR(&info.wifi_ap_staipassigned.ip));
+  }, ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED);
+
   wifi_bandwidth_t bw = WIFI_BW_HT40;
   esp_wifi_get_bandwidth(WIFI_IF_AP, &bw);
   Serial.printf("[wifi] channel 6, %s MHz, tx power %.1f dBm\n", bw == WIFI_BW_HT20 ? "20" : "40", WiFi.getTxPower() / 4.0f);
@@ -86,6 +90,33 @@ void AccessPoint::webTick() {
   s_webAt = now;
   if (s_tickUs && us - s_tickUs > s_tickGapUs) s_tickGapUs = us - s_tickUs;
   s_tickUs = us; ++s_ticks;
+}
+
+bool AccessPoint::probesOnline(int set) {
+  static bool online = false;
+  if (set >= 0) online = set;
+  return online;
+}
+
+bool AccessPoint::webLog(int set) {
+  static bool on = false;
+  if (set >= 0) on = set;
+  return on;
+}
+
+String AccessPoint::station(const String& args) {
+  if (args == "OFF") { WiFi.disconnect(false, false); WiFi.mode(WIFI_AP); return "off"; }
+  if (args.length()) {
+    const int sp = args.indexOf(' ');
+    const String ssid = sp < 0 ? args : args.substring(0, sp), pass = sp < 0 ? String() : args.substring(sp + 1);
+    WiFi.persistent(false);   // never store these credentials
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(ssid.c_str(), pass.c_str());
+    return "joining " + ssid;
+  }
+  if (!(WiFi.getMode() & WIFI_STA)) return "off";
+  return String(WiFi.status() == WL_CONNECTED ? "connected" : "not connected (" + String((int)WiFi.status()) + ")") +
+         " ip " + WiFi.localIP().toString() + " rssi " + String(WiFi.RSSI()) + " channel " + String(WiFi.channel());
 }
 
 String AccessPoint::webStats(bool reset) {
@@ -117,6 +148,7 @@ void AccessPoint::healthLog() {
 // The URLs phones and computers fetch to decide whether a network reaches
 // the internet, with the answer each expects when it does.
 bool AccessPoint::answerProbe(WebServer& s) {
+  if (!probesOnline()) return false;   // yesterday's behaviour: the caller redirects them to the page
   const String& u = s.uri();
   if (u == "/generate_204" || u == "/gen_204") {                     // Android, Chrome
     s.send(204, "text/plain", "");

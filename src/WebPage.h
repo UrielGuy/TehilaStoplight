@@ -92,12 +92,21 @@ const $=id=>document.getElementById(id);
 const DEFC=[48,52,12],RND=64,LV=[0,140,195,255],NAMES=['Top · עליון','Middle · אמצעי','Bottom · תחתון'];
 const NAMED=[['Red',48],['Orange',52],['Yellow',60],['Green',12],['Cyan',15],['Blue',3],['Magenta',51],['White',63],['Pink',53],['Lime',28]];
 let SIZES=[],SPRITES=[],ANIMS=[],state={sets:[],current:0};
-const FX=[['fx:quarters','Quarters · 4 colours turning'],['fx:pulse','Pulse · 75% ↔ full size']],DEFQ=[60,12,3];
+const FX=[   /* id, name in the graphic list, what the check line says (+ the BPM except for sparkles) */
+ ['fx:quarters','Quarters · 4 colours turning','quarters: turn 30° clockwise on every beat'],['fx:pulse','Pulse · 75% ↔ full size','pulse: 75% of the circle, jumps to full size on every beat'],
+ ['fx:wave','Wave · line swinging on the beat','wave: a line swinging on every beat'],['fx:clock','Clock · 5 minutes per beat','clock: starts at 12:00, 5 minutes later on every beat'],
+ ['fx:ecg','Heartbeat · pulse line on the beat','heartbeat: a pulse line running right to left, its spike in the middle on every beat'],
+ ['fx:ecgsweep','Heartbeat · sweep','heartbeat sweep: the trace drawn by a sweep from left to right, the spike on every beat'],
+ ['fx:heart','Beating heart','heart: full size on every beat, shrinking to 80% before the next'],['fx:ripples','Ripples','ripples: a ring from the centre on every beat'],
+ ['fx:eq','Equaliser','equaliser: 7 coloured bars jump on every beat'],['fx:chase','Chasing lights','chasing lights: one more bulb on every beat, then all off'],
+ ['fx:ball','Bouncing ball','bouncing ball: lands on every beat'],['fx:sparkle','Sparkles','sparkles: twinkling dots, not tied to the beat'],
+ ['fx:fillv','Fill · vertical lines','fill: vertical lines on every beat, full 0.1 s before the frame ends'],
+ ['fx:fillx','Fill · grid lines','fill: lines down and across on every beat, full 0.1 s before the frame ends']],DEFQ=[60,12,3];
 /* ---------- beat animations: mirror of rgb2Hue (Canvas.h) and Face::drawLight (Face.cpp), keep in step ---------- */
 function hueTurn(c,deg){let r=(c>>4)&3,g=(c>>2)&3,b=c&3;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;if(!d||deg%360===0)return c;
  let h=mx===r?(g>=b?60*(g-b)/d:360-60*(b-g)/d):mx===g?120+60*(b-r)/d:240+60*(r-g)/d;h=((h+deg)%360+360)%360;
  const up=mn+Math.floor((h%60*d+30)/60),dn=mn+Math.floor(((60-h%60)*d+30)/60);[r,g,b]=[[mx,up,mn],[dn,mx,mn],[mn,mx,up],[mn,dn,mx],[up,mn,mx],[mx,mn,dn]][Math.floor(h/60)];return(r<<4)|(g<<2)|b}
-function beatOf(bpm,grid,frame){return{bpm,st:bpm?Math.floor(grid*bpm/60000)-Math.floor(Math.max(0,grid-frame)*bpm/60000):0,ph:bpm?(grid*bpm)%60000:0}}
+function beatOf(bpm,grid,frame,len){return{bpm,st:bpm?Math.floor(grid*bpm/60000)-Math.floor(Math.max(0,grid-frame)*bpm/60000):0,ph:bpm?(grid*bpm)%60000:0,gr:grid,fr:frame,fl:len||0}}   /* Face::Beat; fl = the frame's length */
 const hueDeg=(st,per)=>(st*per)%360;
 function pulseD(b){if(!b.bpm)return 96;const r=60000-b.ph;return 96+Math.floor((32*r*r+1800000000)/3600000000)}
 const pvRgb=c=>c?rgbOf(c):[12,12,12];   /* the server's preview shows black as 12,12,12 (Preview.cpp) */
@@ -127,7 +136,8 @@ $('animUp').onclick=async()=>{const files=[...$('animFile').files];if(!files.len
  $('animFile').value='';lastState='';load()};
 const ANIMDATA={};   /* id -> {w,h,frames:[Uint8Array],delays,total} decoded for the preview */
 async function animData(id){if(ANIMDATA[id]!==undefined)return ANIMDATA[id];ANIMDATA[id]=null;
- const b=await fetch('/api/anims/'+id+'.anm').then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);if(!b){delete ANIMDATA[id];return null}
+ let st=0;const b=await fetch('/api/anims/'+id+'.anm').then(r=>{st=r.status;return r.ok?r.arrayBuffer():null}).catch(()=>null);
+ if(!b){setTimeout(()=>{if(ANIMDATA[id]===null)delete ANIMDATA[id]},st===404?30000:3000);return null}   /* missing or no connection: ask again later, not on every frame */
  if(new Uint8Array(b)[3]===3){try{const d=decodeV3(b);return ANIMDATA[id]=d}catch(e){delete ANIMDATA[id];return null}}
  const v=new DataView(b),w=v.getUint16(4,true),h=v.getUint16(6,true),n=v.getUint16(8,true),delays=[],lens=[];
  for(let i=0;i<n;i++){delays.push(Math.max(20,v.getUint16(12+i*6,true)));lens.push(v.getUint32(14+i*6,true))}
@@ -272,7 +282,7 @@ function buildLights(){const L=cur(),host=$('lights');host.innerHTML='';
   host.appendChild(d);
   const sel=$('k'+i);SPRITES.forEach(sp=>{const o=document.createElement('option');o.value=sp.id;o.textContent=sp.name;sel.appendChild(o)});
   {const g=document.createElement('optgroup');g.label='On the beat';FX.forEach(([v,n])=>{const o=document.createElement('option');o.value=v;o.textContent=n;g.appendChild(o)});sel.appendChild(g)}
-  const qr=document.createElement('div');qr.className='row tm';qr.id='qr'+i;qr.innerHTML=`Quarters, clockwise from the top left: <button type="button" class="swatch" id="qc${i}" title="Quarter 1 = circle colour"></button>`+[0,1,2].map(k=>`<button type="button" class="swatch" id="q${i}_${k}" title="Quarter ${k+2}"></button>`).join('')+' · they move one quarter clockwise on every beat';d.appendChild(qr);
+  const qr=document.createElement('div');qr.className='row tm';qr.id='qr'+i;qr.innerHTML=`Quarters, clockwise from the top left: <button type="button" class="swatch" id="qc${i}" title="Quarter 1 = circle colour"></button>`+[0,1,2].map(k=>`<button type="button" class="swatch" id="q${i}_${k}" title="Quarter ${k+2}"></button>`).join('')+' · they turn 30° clockwise on every beat';d.appendChild(qr);
   $('qc'+i).onclick=e=>{e.preventDefault();e.stopPropagation();openPal(i,'bg')};[0,1,2].forEach(k=>{$('q'+i+'_'+k).onclick=e=>{e.preventDefault();e.stopPropagation();openPal(i,'q'+k)}});
   if(ANIMS.length){const g=document.createElement('optgroup');g.label='Your animations';ANIMS.forEach(a=>{const o=document.createElement('option');o.value='u:'+a.id;o.textContent=a.id+(a.full?' (whole sign)':'');g.appendChild(o)});sel.appendChild(g)}
   if(l.k.startsWith('u:')&&!ANIMS.find(a=>'u:'+a.id===l.k)){const o=document.createElement('option');o.value=l.k;o.textContent=l.k.slice(2)+' (missing)';sel.appendChild(o)}
@@ -309,7 +319,7 @@ function pick(i,c,which){const l=cur()[i];if(which==='ink')l.f=c;else if(which==
 
 /* ---------- fit checks and sizes ---------- */
 async function checkLight(i){const l=cur()[i];if(l.k==='off'){fits[i]=true;F(i,'','light off');sizeUI(i);update();return}if(l.k.startsWith('u:')){const a=ANIMS.find(x=>'u:'+x.id===l.k);fits[i]=!!a;F(i,a?'ok':'bad',a?`animation ${a.id}: ${(a.ms/1000).toFixed(1)} s, ${a.frames} frames${a.full?' · fills the whole sign':''}`:'animation not on the sign');sizeUI(i);update();return}
- if(l.k==='fx:quarters'||l.k==='fx:pulse'){fits[i]=true;F(i,'ok',l.k==='fx:pulse'?`pulse: 75% of the circle, jumps to full size on every beat (${ed.bpm} BPM)`:`quarters: turn one quarter clockwise on every beat (${ed.bpm} BPM)`);sizeUI(i);update();return}
+ const fxe=FX.find(x=>x[0]===l.k);if(fxe){fits[i]=true;F(i,'ok',fxe[2]+(l.k==='fx:sparkle'?'':` (${ed.bpm} BPM)`));sizeUI(i);update();return}
  if(l.k!=='short'&&l.k!=='long'){fits[i]=true;F(i,'ok','graphic: '+((SPRITES.find(s=>s.id===l.k)||{}).name||l.k));sizeUI(i);update();return}
  const v=l.t.trim();if(!v){fits[i]=true;F(i,'','');eff[i]=0;sizeUI(i);update();return}
  const r=await fetch(`/api/check?text=${encodeURIComponent(v)}&light=${i}&size=${l.s}`).then(r=>r.json()).catch(()=>({ok:false,error:'no connection'}));
@@ -372,7 +382,7 @@ function lightsJson(L){return{t:L.map(l=>isText(l)?l.t.trim():''),k:L.map(l=>l.k
 const maskOf=L=>L.reduce((m,l,i)=>m|(l.k!=='off'?1<<i:0),0);
 function setJson(){const name=(ed.name||'').trim().slice(0,40);return{name,bpm:ed.bpm||120,frames:ed.frames.map(f=>({...lightsJson(f.lights),m:maskOf(f.lights),ms:f.ms,mp3:f.mp3||0,...(f.mp3===-2?{fade:f.fade||3}:{})})),loops:ed.loops.map(L=>({from:L.from,to:L.to,count:L.count}))}}
 function playlist(frames,loops){const out=[],n=frames.length;let i=0;while(i<n&&out.length<400){const L=loops.find(x=>x.from-1===i&&x.to<=n&&x.to>=x.from);if(L){for(let c=0;c<L.count&&out.length<400;c++)for(let k=i;k<L.to;k++)out.push(k);i=L.to}else{out.push(i);i++}}return out}
-function draftJson(){const L=cur();return{...lightsJson(L),m:maskOf(L),bpm:ed.bpm||120}}
+function draftJson(){const L=cur();return{...lightsJson(L),m:maskOf(L),bpm:ed.bpm||120,ms:ed.frames[ed.cur].ms}}
 
 /* ---------- preview: timeline of {lights, mask, ms} played on a canvas ---------- */
 const ctx=$('pv').getContext('2d');let frames={},fails={},animTimer=null,animGen=0,rolls={};
@@ -381,16 +391,87 @@ function decodeRle(buf){const b=new Uint8Array(buf);if(b.length<7||b[0]!==82||b[
  return p===d.length?img:null}   /* incomplete stream: reject, the caller refetches */
 function timeline(){let t=0,b0=0;if(!$('playAll').checked){const f=ed.frames[ed.cur];return[{L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:ed.cur,start:0,b0:0}]}
  const pl=loopErrors().some(Boolean)?ed.frames.map((_,i)=>i):playlist(ed.frames,ed.loops);return pl.map((fi,pi)=>{const f=ed.frames[fi];if(pi&&f.mp3>0)b0=t;const e={L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:pi,start:t,b0};t+=f.ms;return e})}
-/* Beat animations painted over the server's image of the frame's start: quarters and pulse lights are drawn
+/* Beat animations painted over the server's image of the frame's start: quarters, pulse, wave, clock and heartbeat lights are drawn
    whole, hue-jumping lights get their circle and ink colours swapped (Face::drawLight does the same on the LEDs). */
-function paintBeat(e,b){if(!b.bpm||e.L.some(l=>l.k.startsWith('u:')&&(ANIMDATA[l.k.slice(2)]||{}).h>128))return;
- e.L.forEach((l,i)=>{if(!((e.m>>i)&1)||l.k.startsWith('u:'))return;const fx=l.k==='fx:quarters'?1:l.k==='fx:pulse'?2:0;if(!fx&&!l.hc&&!l.hf)return;
+function paintBeat(e,b){if(e.L.some(l=>l.k.startsWith('u:')&&(ANIMDATA[l.k.slice(2)]||{}).h>128))return;
+ e.L.forEach((l,i)=>{if(!((e.m>>i)&1)||l.k.startsWith('u:'))return;const fx=FXN[l.k]||0;if(!b.bpm&&!timeFx(fx))return;if(!fx&&!l.hc&&!l.hf)return;
   const r=roll(e.fi,i,l),{bg,fg}=beatColours(l,r,b),img=ctx.getImageData(0,i*128,128,128),d=img.data;
-  if(fx){let q=[bg,bg,bg,bg],D=128;if(fx===1){const deg=hueDeg(b.st,l.hc||0),cols=[bg,...r.q.map(v=>hueTurn(v,deg))];q=[0,1,2,3].map(k=>cols[(k+4-b.st%4)%4])}else D=pulseD(b);
-   const c4=q.map(pvRgb),blk=pvRgb(0);for(let y=0;y<128;y++){const dy=2*y-127;for(let x=0;x<128;x++){const dx=2*x-127,k=(y*128+x)*4,c=dx*dx+dy*dy<=D*D?c4[dy<0?(dx<0?0:1):(dx<0?3:2)]:blk;d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}}}
+  if(fx>=6&&fx<=13){const f=rowFxPrep(fx,l,b,bg,fg===bg?(bg?0:63):fg,i),row=Array(128),pal=[];
+   for(let y=0;y<128;y++){rowFxRow(f,y,row);for(let x=0;x<128;x++){const v=row[x],c=pal[v]||(pal[v]=pvRgb(v)),k=(y*128+x)*4;d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}}}
+  else if(fx){let q=Array(12).fill(bg),D=128,wv=null,wc=null,wh=null;if(fx===1){const deg=hueDeg(b.st,l.hc||0),cols=[bg,...r.q.map(v=>hueTurn(v,deg))];q=q.map((_,s)=>cols[Math.floor(((s+15-b.st%12)%12)/3)])}else if(fx===2)D=pulseD(b);else if(fx===3)wv=waveRows(waveAmp(b));else if(fx===5||fx===14){const sc=b.bpm?Math.floor(b.ph*128/60000):0,lead=(64+sc)&127,ik=fg===bg?(bg?0:63):fg,dm=dim2(ik);wv=ecgRows(fx===5?-sc:0);
+    if(fx===14&&b.bpm){const di=pvRgb(dm===bg?ik:dm);wc=[];wh=[];for(let x=0;x<128;x++){const age=(lead-x)&127;wh.push(age<64);wc.push(age>=48?di:null)}}}const ck=fx===4?clockFace(b):null;
+   const c4=q.map(pvRgb),blk=pvRgb(0),wi=pvRgb(fg===bg?(bg?0:63):fg);for(let y=0;y<128;y++){const dy=2*y-127;for(let x=0;x<128;x++){const dx=2*x-127,k=(y*128+x)*4,c=dx*dx+dy*dy<=D*D?(wv&&dy>=wv[0][x]&&dy<=wv[1][x]&&(!wh||wh[x])?(wc&&wc[x]||wi):ck&&clockInk(ck,dx,dy,dx*dx+dy*dy)?wi:c4[sector(dx,dy)]):blk;d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}}}
   else{const ink=fg===bg?(bg?0:63):fg,b0=pvRgb(r.c),f0=pvRgb(r.f===r.c?(r.c?0:63):r.f),b1=pvRgb(bg),f1=pvRgb(ink);
    for(let k=0;k<d.length;k+=4){const c=d[k]===b0[0]&&d[k+1]===b0[1]&&d[k+2]===b0[2]?b1:d[k]===f0[0]&&d[k+1]===f0[1]&&d[k+2]===f0[2]?f1:null;if(c){d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}}}
   ctx.putImageData(img,0,i*128)})}
+function sector(dx,dy){const x2=dx*dx,y2=dy*dy,v=3*x2<y2?0:x2<3*y2?1:2,h=3*y2<x2?0:y2<3*x2?1:2;return dx>0?(dy<0?v:3+h):(dy>0?6+v:9+h)}   /* Face.cpp sector(): twelfths clockwise from 12 o'clock */
+/* fx:wave, as Face.cpp: SIN_Q = 1024*sin over a quarter turn (256 steps a turn), the amplitude in px (+ = left up)
+   and the line's doubled-unit rows per column (centre per column, then a round brush) */
+const SIN_Q=[0,25,50,75,100,125,150,175,200,224,249,273,297,321,345,369,392,415,438,460,483,505,526,548,569,590,610,630,650,669,688,706,724,742,759,775,792,807,822,837,851,865,878,891,903,915,926,936,946,955,964,972,980,987,993,999,1004,1009,1013,1016,1019,1021,1023,1024,1024];
+function sin256(n){n&=255;const i=n&63,q=n>>6;return q===0?SIN_Q[i]:q===1?SIN_Q[64-i]:q===2?-SIN_Q[i]:-SIN_Q[64-i]}
+function waveAmp(b){if(!b.bpm)return 0;const c=sin256(64+Math.floor(b.ph*128/60000)),a=(26*Math.abs(c)+512)>>10;return(c<0)!==((b.st&1)===1)?-a:a}
+function waveRows(a){const rd=v=>v<0?-((-v+512)>>10):(v+512)>>10,W=[6,5,4],mid=[],lo=[],hi=[];for(let x=-2;x<130;x++)mid.push(-rd(2*a*sin256(2*x+1)));
+ for(let x=0;x<128;x++){let l=1e9,h=-1e9;for(let j=-2;j<=2;j++){const m=mid[x+2+j],w=W[Math.abs(j)];l=Math.min(l,m-w);h=Math.max(h,m+w)}lo.push(l);hi.push(h)}return[lo,hi]}
+/* fx:ecg, as Face.cpp: the trace (px above the baseline per column, R spike on 63/64) scrolled s px to the right
+   (fx:ecg passes -scroll: it moves right to left; fx:ecgsweep 0, seen through a window sweeping left to right);
+   each column's run reaches half way to its neighbours, the line takes three columns' runs plus 3 up and down */
+const ECG=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,3,4,5,6,6,6,6,5,4,3,3,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,-2,-4,-4,-1,5,15,25,35,35,25,15,5,-3,-8,-9,-6,-2,0,0,0,0,0,0,0,0,0,1,1,2,3,4,6,7,8,9,9,10,10,10,10,9,9,8,7,6,4,3,2,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+function ecgRows(s){const E=x=>ECG[(x-s)&127],rl=[],rh=[],lo=[],hi=[];for(let x=-1;x<=128;x++){const v=E(x),c=-2*v,l=-(v+E(x-1)),r=-(v+E(x+1));rl.push(Math.min(c,l,r));rh.push(Math.max(c,l,r))}
+ for(let x=0;x<128;x++){lo.push(Math.min(rl[x],rl[x+1],rl[x+2])-3);hi.push(Math.max(rh[x],rh[x+1],rh[x+2])+3)}return[lo,hi]}
+/* fx:clock, as Face.cpp: 12:00 at the frame's start, 5 minutes a beat with a quartz tick (eases out over 1/8 beat);
+   angles in half degrees, directions 1024 = 1, geometry in doubled units (bezel, marks, tapered hands, hub with pin) */
+function rdiv(v,d){return v<0?-Math.floor((-v+Math.floor(d/2))/d):Math.floor((v+Math.floor(d/2))/d)}
+function sin720(a){const t=(((a%720)+720)%720)*256,i=Math.floor(t/720),s0=sin256(i);return s0+rdiv((sin256(i+1)-s0)*(t%720),720)}
+function clockFace(b){const n=b.st;let h=n%144*5,m=n%12*60;if(n&&b.ph<7500){const r=7500-b.ph,q=56250000;h=(h+720-Math.floor((5*r*r+q/2)/q))%720;m=(m+720-Math.floor((60*r*r+q/2)/q))%720}
+ const u=a=>[sin720(a),-sin720(a+180)];return{marks:[...Array(12).keys()].map(k=>u(k*60)),h:u(h),m:u(m)}}
+function onHand(dx,dy,[ux,uy],tail,len,w0,w1){const al=dx*ux+dy*uy,ac=dx*uy-dy*ux,t=tail*1024,l=len*1024;
+ return al<t?(al-t)**2+ac**2<=w0*w0*1048576:al<=0?Math.abs(ac)<=w0*1024:al<=l?Math.abs(ac)*len<=w0*len*1024+(w1-w0)*al:(al-l)**2+ac**2<=w1*w1*1048576}
+function clockInk(f,dx,dy,d2){if(d2>=122*122)return true;if(d2<=14*14)return d2>16;
+ if(d2>=84*84&&d2<=114*114){const d=sector(dx,dy);for(let k=d;k<=d+1;k++){const m=k%12,main=m%3===0,[ux,uy]=f.marks[m],al=dx*ux+dy*uy,ac=dx*uy-dy*ux,w=main?5:3;if(al>=(main?84:98)*1024&&al<=114*1024&&ac*ac<=w*w*1048576)return true}}
+ return onHand(dx,dy,f.m,0,102,7,4)||onHand(dx,dy,f.h,0,64,9,5)}
+/* Beat animations painted a row at a time (fx:heart and later), as Face.cpp RowFx: rowFxPrep once per draw, then
+   rowFxRow per row into an array of 0bRRGGBB colours. Integer maths with the same hash (mix32) and tables. */
+const SPC=[63,60,15,51,56,12,47],FXN={'fx:quarters':1,'fx:pulse':2,'fx:wave':3,'fx:clock':4,'fx:ecg':5,'fx:heart':6,'fx:ripples':7,'fx:eq':8,'fx:chase':9,'fx:ball':10,'fx:sparkle':11,'fx:fillv':12,'fx:fillx':13,'fx:ecgsweep':14},
+ timeFx=fx=>fx===11||fx===12||fx===13,EQC=[48,56,60,12,15,3,51];
+function mix32(x){x>>>=0;x^=x>>>16;x=Math.imul(x,0x7feb352d);x^=x>>>15;x=Math.imul(x,0x846ca68b);x^=x>>>16;return x>>>0}
+const dim2=c=>((c>>4)&3?16:0)|((c>>2)&3?4:0)|(c&3?1:0);
+function fillShown(b,n){const end=b.fl-100;if(!b.bpm||end<0)return b.fr>=end?n:0;const start=Math.max(0,b.gr-b.fr),
+ upTo=t=>Math.floor((start+t)*b.bpm/60000)-(start?Math.floor((start-1)*b.bpm/60000):-1),beats=upTo(end);   /* beat-grid moments in [frame start, t] */
+ if(!beats)return b.fr>=end?n:0;const k=Math.min(upTo(b.fr),beats);
+ return beats<=n?Math.floor((k*n+beats-1)/beats):k?1+Math.floor((k-1)*(n-1)/(beats-1)):0}
+function rowFxPrep(fx,l,b,base,ink,light){const f={e:fx,base,ink,dim:dim2(ink)},n=b.st;
+ if(fx===6){f.z=b.bpm?205+Math.floor((51*(60000-b.ph)**2+1800000000)/3600000000):205}
+ else if(fx===7){const pq=b.bpm?Math.floor(b.ph*256/60000):128,st=b.bpm?Math.min(n,2):2;f.rings=[];
+  for(let j=0;j<=st;j++){const a=j*256+pq;if(a>=640)continue;const r=Math.floor(128*a*(1920-a)/819200),w=5-Math.floor(3*a/640),lo=r>w?r-w:0;f.rings.push([lo*lo,(r+w)*(r+w),a>=448&&f.dim!==base?f.dim:ink])}}
+ else if(fx===8){const rem=b.bpm?60000-b.ph:60000,deg=hueDeg(n,l.hc||0);f.pk=[];f.h=[];f.col=[];
+  for(let i=0;i<7;i++){const p=3+mix32(Math.imul(n,7)+i+0x5eed)%10;f.pk.push(p);f.h.push(1+Math.floor(((p-1)*rem*rem+1800000000)/3600000000));f.col.push(deg?hueTurn(EQC[i],deg):EQC[i])}
+  f.bar=[];for(let x=0;x<128;x++){const t=x-10;f.bar.push(t>=0&&t<112&&t%16<12?Math.floor(t/16):-1)}}
+ else if(fx===9){f.bx=[];f.by=[];for(let k=0;k<12;k++){f.bx.push(rdiv(100*sin720(k*60),1024));f.by.push(-rdiv(100*sin720(k*60+180),1024))}f.lit=(n+1)%13;if(f.dim===ink)f.dim=dim2(base)}
+ else if(fx===10){const u=b.bpm?b.ph:0,d=Math.min(u,60000-u),h=d<3000?0:Math.floor(4*128*(u-3000)*(57000-u)/2916000000),sq=b.bpm&&d<3000?Math.floor((6*(3000-d)+1500)/3000):0;f.rx=22+sq;f.ry=22-sq;f.cy=97-f.ry-h}
+ else if(fx===11){const t=Math.floor(b.fr/40),seed=Math.imul(light,0x9e3779b9),deg=hueDeg(n,l.hf||0),hc=c=>deg?hueTurn(c,deg):c;f.sp=[];
+  for(let i=0;i<20;i++){const per=14+mix32(i*977+1+seed)%12,tt=t+mix32(i*131+7+seed)%per,g=Math.floor(tt/per),tau=tt%per,h=mix32(Math.imul(i,7919)+Math.imul(g,104729)+12345+seed),h2=mix32(h);
+   let life=8+h%12;if(life>per-2)life=per-2;if(tau>=life)continue;const a=(h>>>4)%720,u1=h2&1023,u2=(h2>>>10)&1023,rho=Math.floor(54*Math.max(u1,u2)/1023);
+   let ci=(h2>>>21)%7,col=hc(SPC[ci]);while(col===base){ci=(ci+1)%7;col=hc(SPC[ci])}const dm=dim2(col);
+   f.sp.push({x:63+rdiv(rho*sin720(a),1024),y:63-rdiv(rho*sin720(a+180),1024),st:Math.floor(tau*4/life),star:(h2>>>20)&1,col,dim:dm!==base?dm:col})}}
+ else if(fx===12||fx===13){const lines=fx===12?64:128,shown=fillShown(b,lines),o=[...Array(lines).keys()];
+  for(let i=lines-1;i>0;i--){const j=mix32(lines*1000+i)%(i+1),t=o[i];o[i]=o[j];o[j]=t}
+  f.col=Array(64).fill(0);f.row=Array(64).fill(0);for(let i=0;i<shown;i++){if(o[i]<64)f.col[o[i]]=1;else f.row[o[i]-64]=1}}
+ return f}
+function rowFxRow(f,y,row){const dy=2*y-127,dy2=dy*dy,F=16384,e=f.e;
+ if(e===6){const z=f.z,py=dy*256,a=Math.abs(py-10*z),ly=py+37*z,ly2=ly*ly,hz=94*z,lx=47*z,r2=4418*z*z,col=f.base?f.base:f.ink;
+  for(let x=0;x<128;x++){const dx=2*x-127,ax=Math.abs(dx)*256,ex=ax-lx;row[x]=dx*dx+dy2<=F&&(ax+a<=hz||ex*ex+ly2<=r2)?col:0}}
+ else if(e===7){for(let x=0;x<128;x++){const dx=2*x-127,d2=dx*dx+dy2;let v=d2<=F?f.base:0;for(const g of f.rings)if(d2>=g[0]&&d2<=g[1]){v=g[2];break}row[x]=d2<=F?v:0}}
+ else if(e===8){const u=107-y,seg=u>=0&&u%8<6&&Math.floor(u/8)<12?Math.floor(u/8):-1,rim2=120*120;
+  for(let x=0;x<128;x++){const dx=2*x-127,d2=dx*dx+dy2,bar=f.bar[x];row[x]=d2>F?0:d2>=rim2?f.base:bar>=0&&seg>=0&&(seg<f.h[bar]||seg===f.pk[bar]-1)?f.col[bar]:0}}
+ else if(e===9){const lo=84,hi=116;for(let x=0;x<128;x++){const dx=2*x-127,d2=dx*dx+dy2;let v=d2<=F?f.base:0;
+  if(d2>=lo*lo&&d2<=hi*hi){const d=sector(dx,dy);for(let k=d;k<=d+1;k++){const m=k%12,ex=dx-f.bx[m],ey=dy-f.by[m];if(ex*ex+ey*ey<=256){v=m<f.lit?f.ink:f.dim;break}}}row[x]=v}}
+ else if(e===10){const ey=dy-f.cy,rx2=f.rx*f.rx,ry2=f.ry*f.ry,lim=rx2*ry2,et=ey*ey*rx2,fl=dy>=97&&dy<=99;
+  for(let x=0;x<128;x++){const dx=2*x-127,d2=dx*dx+dy2;row[x]=d2>F?0:fl||dx*dx*ry2+et<=lim?f.ink:f.base}}
+ else if(e===11){for(let x=0;x<128;x++){const dx=2*x-127;row[x]=dx*dx+dy2<=F?f.base:0}
+  for(const s of f.sp){const oy=y-s.y,ay=Math.abs(oy);if(ay>6)continue;for(let ox=-6;ox<=6;ox++){const ax=Math.abs(ox),x=s.x+ox,axis=ax===0||ay===0,r=ax+ay;if(x<0||x>=128)continue;
+   const lv=s.st===0||s.st===3?(axis&&r<=1?1:0):s.st===1?(r===0?2:axis&&r<=2?1:0):s.star?(ax<=1&&ay<=1?2:axis?(r<=4?2:r<=6?1:0):0):(ax*ax+ay*ay<=5?2:ax*ax+ay*ay<=8?1:0);
+   if(!lv)continue;const dx=2*x-127;if(dx*dx+dy2<=F)row[x]=lv===2?s.col:s.dim}}}
+ else if(e===12||e===13){const ro=f.row[y>>1];for(let x=0;x<128;x++){const dx=2*x-127;row[x]=dx*dx+dy2>F?0:ro||f.col[x>>1]?f.ink:f.base}}}
 function roll(fi,i,l){const key=fi+':'+i;if(!rolls[key]){const c=l.c===RND?rnd(0):l.c;rolls[key]={c,f:l.f===RND?rnd(c):l.f,q:(l.q||DEFQ).map(v=>v===RND?rnd(c):v)}}return rolls[key]}   /* fi = playlist position, so a looped frame re-rolls each pass like the sign does */
 function query(e){const L=e.L;return L.map((l,i)=>{const r=roll(e.fi,i,l);const text=isText(l)?l.t.trim():'';const g=(isText(l)||l.k==='off')?'':l.k;return`t${i}=${encodeURIComponent(text)}&s${i}=${l.s}&c${i}=${r.c}&f${i}=${r.f}&g${i}=${g}&k${i}=${l.k==='off'?'off':''}&q${i}=${r.q.join(',')}`}).join('&')}
 const preview=debounce(()=>{const gen=++animGen;clearTimeout(animTimer);frames={};fails={};rolls={};if(!$('live').checked)return;liveSend();
@@ -399,7 +480,7 @@ const preview=debounce(()=>{const gen=++animGen;clearTimeout(animTimer);frames={
  const beatFx=e=>e.L.some(l=>l.k.startsWith('fx:')||l.hc||l.hf);
  const used=e=>e.L.map(l=>SPRITES.find(s=>s.id===l.k)).filter(Boolean);
  let busy=false;
- const tick=async()=>{if(gen!==animGen)return;const ms=Date.now()-t0,[e,t]=entryAt(ms),sp=used(e),bt=beatOf(+ed.bpm||0,t-e.b0,t-e.start);const key=e.fi+':'+e.m+':'+sp.map(s=>s.frames>1?Math.floor(ms/s.ms)%s.frames:0).join(',');
+ const tick=async()=>{if(gen!==animGen)return;const ms=Date.now()-t0,[e,t]=entryAt(ms),sp=used(e),bt=beatOf(+ed.bpm||0,t-e.b0,t-e.start,e.ms);const key=e.fi+':'+e.m+':'+sp.map(s=>s.frames>1?Math.floor(ms/s.ms)%s.frames:0).join(',');
   const hasAnim=e.L.some(l=>l.k.startsWith('u:'));
   if(frames[key]){ctx.putImageData(frames[key],0,0);paintBeat(e,bt);if(hasAnim)paintAnims(e,ms,bt)}
   else if(!busy&&!(fails[key]>3)){busy=true;const b=await fetch(`/api/preview.rle?${query(e)}&m=${e.m}&k=${ms}`,{cache:'no-store'}).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);busy=false;if(gen!==animGen)return;

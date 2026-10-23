@@ -30,7 +30,7 @@ SPRITES_H = os.path.join(ROOT, "src", "sprites", "Sprites.h")
 LIGHTS, DIAMETER, MARGIN = 3, 128, 3
 R_INNER = DIAMETER // 2 - MARGIN   # 61
 MAX_LINES, RING = 8, 3
-FX_NONE, FX_QUARTERS, FX_PULSE = 0, 1, 2
+FX_NONE, FX_QUARTERS, FX_PULSE, FX_WAVE, FX_CLOCK = 0, 1, 2, 3, 4
 W, H = 128, 384
 LEVEL = (0, 140, 195, 255)   # Preview.cpp: level 1 shown brighter than 1/3
 MAX_ENUM_WORDS = 14
@@ -608,15 +608,150 @@ def pulse_diameter(b):
 
 
 def effect_by_id(gid):
-    return FX_QUARTERS if gid == b"fx:quarters" else FX_PULSE if gid == b"fx:pulse" else FX_NONE
+    return {b"fx:quarters": FX_QUARTERS, b"fx:pulse": FX_PULSE, b"fx:wave": FX_WAVE, b"fx:clock": FX_CLOCK}.get(gid, FX_NONE)
+
+
+# Face.cpp SIN_Q / sin256(): 1024 * sin, 256 steps a turn (integer, same table)
+SIN_Q = (0, 25, 50, 75, 100, 125, 150, 175, 200, 224, 249, 273, 297, 321, 345, 369, 392, 415, 438, 460, 483, 505,
+         526, 548, 569, 590, 610, 630, 650, 669, 688, 706, 724, 742, 759, 775, 792, 807, 822, 837, 851, 865, 878,
+         891, 903, 915, 926, 936, 946, 955, 964, 972, 980, 987, 993, 999, 1004, 1009, 1013, 1016, 1019, 1021, 1023,
+         1024, 1024)
+
+
+def sin256(n):
+    n &= 255
+    i, q = n & 63, n >> 6
+    return SIN_Q[i] if q == 0 else SIN_Q[64 - i] if q == 1 else -SIN_Q[i] if q == 2 else -SIN_Q[64 - i]
+
+
+def _round_div1024(v):
+    return -((-v + 512) >> 10) if v < 0 else (v + 512) >> 10
+
+
+WAVE_AMP, WAVE_BRUSH = 26, (6, 5, 4)
+
+
+def wave_amp(b):
+    """Face.cpp waveAmp(): px, + = left half up."""
+    if not b.bpm:
+        return 0
+    c = sin256(64 + b.phase() * 128 // 60000)
+    a = (WAVE_AMP * abs(c) + 512) >> 10
+    return -a if (c < 0) != bool(b.steps() & 1) else a
+
+
+CLK_TICK = 7500
+
+
+def clock_hands(b):
+    """Face.cpp clockHands(): (hour, minute) in half degrees clockwise from 12."""
+    n = b.steps()
+    hour, minute = n % 144 * 5, n % 12 * 60
+    if n and b.phase() < CLK_TICK:
+        rem, q = CLK_TICK - b.phase(), CLK_TICK * CLK_TICK
+        hour = (hour + 720 - (5 * rem * rem + q // 2) // q) % 720
+        minute = (minute + 720 - (60 * rem * rem + q // 2) // q) % 720
+    return hour, minute
+
+
+def _round_div(v, d):
+    return -((-v + d // 2) // d) if v < 0 else (v + d // 2) // d
+
+
+def sin720(a):
+    t = (a % 720) * 256
+    i = t // 720
+    s0 = sin256(i)
+    return s0 + _round_div((sin256(i + 1) - s0) * (t % 720), 720)
+
+
+def beat_state(s, lit, b):
+    if not lit or not b.bpm:
+        return 0
+    k = b.steps() + 1 if (s.hueBg or s.hueFg or s.effect == FX_QUARTERS) else 0
+    if s.effect == FX_PULSE:
+        k = k * 256 + pulse_diameter(b)
+    if s.effect == FX_WAVE:
+        k = k * 256 + wave_amp(b) + 128
+    if s.effect == FX_CLOCK:
+        h, m = clock_hands(b)
+        k = k * 518400 + h * 720 + m
+    return k & 0xFFFFFFFF
+
+
+def _wave_rows(a):
+    """drawLight's lineLo / lineHi: the wave line's doubled-dy span per column."""
+    mid = [-_round_div1024(2 * a * sin256(2 * x + 1)) for x in range(-2, DIAMETER + 2)]
+    lo, hi = np.empty(DIAMETER, np.int32), np.empty(DIAMETER, np.int32)
+    for x in range(DIAMETER):
+        lo[x] = min(mid[x + 2 + j] - WAVE_BRUSH[abs(j)] for j in range(-2, 3))
+        hi[x] = max(mid[x + 2 + j] + WAVE_BRUSH[abs(j)] for j in range(-2, 3))
+    return lo, hi
 
 
 # doubled coordinates: (2x-127)^2 + (2y-127)^2
 _ax = 2 * np.arange(DIAMETER, dtype=np.int32) - (DIAMETER - 1)
 _D2 = _ax[None, :] ** 2 + _ax[:, None] ** 2
-_QIDX = np.where(_ax[:, None] < 0, np.where(_ax[None, :] < 0, 0, 1), np.where(_ax[None, :] < 0, 3, 2)).astype(np.uint8)
+
+
+def _sector(dx, dy):
+    """Face.cpp sector(): twelfths 0..11 clockwise from 12 o'clock."""
+    ax2, ay2 = dx * dx, dy * dy
+    from_v = 0 if 3 * ax2 < ay2 else 1 if ax2 < 3 * ay2 else 2
+    from_h = 0 if 3 * ay2 < ax2 else 1 if ay2 < 3 * ax2 else 2
+    if dx > 0:
+        return from_v if dy < 0 else 3 + from_h
+    return 6 + from_v if dy > 0 else 9 + from_h
+
+
+_SEC = np.array([[_sector(int(dx), int(dy)) for dx in _ax] for dy in _ax], np.uint8)
 _FULL = _D2 <= DIAMETER * DIAMETER
 _RING = _FULL & (_D2 >= (DIAMETER - 2 * RING) ** 2)
+
+# Face.cpp FX_CLOCK geometry (doubled units) and clockInk()
+CLK_BEZEL, CLK_MARK_OUT, CLK_MARK_IN, CLK_MARK_W, CLK_MAIN_IN, CLK_MAIN_W = 122, 114, 98, 3, 84, 5
+CLK_HOUR = (0, 64, 9, 5)   # tail, length, half width at the centre, at the tip
+CLK_MIN = (0, 102, 7, 4)
+CLK_HUB, CLK_PIN = 14, 4
+_DX, _DY = _ax[None, :].astype(np.int64), _ax[:, None].astype(np.int64)
+
+
+def _along_across(ux, uy):
+    return _DX * ux + _DY * uy, _DX * uy - _DY * ux
+
+
+def _on_hand(ux, uy, tail, length, w0, w1):
+    along, across = _along_across(ux, uy)
+    t, l = tail << 10, length << 10
+    return np.where(along < t, (along - t) ** 2 + across ** 2 <= (w0 * w0 << 20),
+           np.where(along <= 0, np.abs(across) <= (w0 << 10),
+           np.where(along <= l, np.abs(across) * length <= (w0 * length << 10) + (w1 - w0) * along,
+                    (along - l) ** 2 + across ** 2 <= (w1 * w1 << 20))))
+
+
+_CLK_MARKS = None
+
+
+def _clock_marks():
+    global _CLK_MARKS
+    if _CLK_MARKS is None:
+        band = (_D2 >= CLK_MAIN_IN ** 2) & (_D2 <= CLK_MARK_OUT ** 2)
+        marks = np.zeros_like(band)
+        for m in range(12):
+            along, across = _along_across(sin720(m * 60), -sin720(m * 60 + 180))
+            main = m % 3 == 0
+            w = CLK_MAIN_W if main else CLK_MARK_W
+            on = (along >= (CLK_MAIN_IN if main else CLK_MARK_IN) << 10) & (along <= CLK_MARK_OUT << 10) & (across ** 2 <= (w * w << 20))
+            marks |= band & ((_SEC == m) | (_SEC == (m + 11) % 12)) & on   # tested from the twelfths on both sides
+        _CLK_MARKS = marks
+    return _CLK_MARKS
+
+
+def _clock_ink(beat):
+    h, m = clock_hands(beat)
+    hands = _on_hand(sin720(m), -sin720(m + 180), *CLK_MIN) | _on_hand(sin720(h), -sin720(h + 180), *CLK_HOUR)
+    hub = _D2 <= CLK_HUB * CLK_HUB
+    return (_D2 >= CLK_BEZEL * CLK_BEZEL) | (hub & (_D2 > CLK_PIN * CLK_PIN)) | (~hub & (_clock_marks() | hands))
 
 
 def sprite_frame(s, elapsed_ms):
@@ -635,15 +770,21 @@ def draw_light(tile, sp, lit, elapsed_ms, beat, off_dark):
         n = beat.steps()
         deg = _hue_deg(n, sp.hueBg)
         cols = [base] + [rgb2_hue(q, deg) for q in sp.quarters]
-        quarter = [cols[(q + 4 - n % 4) % 4] for q in range(4)]
+        quarter = [cols[((d + 15 - n % 12) % 12) // 3] for d in range(12)]   # per twelfth, 30 degrees per beat
     elif lit and sp.effect == FX_PULSE:
         dia = pulse_diameter(beat)
     if lit:
         inside = _FULL if dia == DIAMETER else (_D2 <= dia * dia)
-        if quarter.count(quarter[0]) == 4:
+        if len(set(quarter)) == 1:
             tile[...] = np.where(inside, np.uint8(quarter[0]), np.uint8(0))
         else:
-            tile[...] = np.where(inside, np.array(quarter, np.uint8)[_QIDX], np.uint8(0))
+            tile[...] = np.where(inside, np.array(quarter, np.uint8)[_SEC], np.uint8(0))
+        if sp.effect == FX_WAVE:
+            lo, hi = _wave_rows(wave_amp(beat))
+            dy = _ax[:, None]
+            tile[_FULL & (dy >= lo[None, :]) & (dy <= hi[None, :])] = ink
+        elif sp.effect == FX_CLOCK:
+            tile[_FULL & _clock_ink(beat)] = ink
     elif not off_dark:
         tile[...] = np.where(_RING, np.uint8(rgb2_dim(sp.bg)), np.uint8(0))
     else:

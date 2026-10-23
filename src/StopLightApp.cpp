@@ -66,6 +66,10 @@ Face::Beat StopLightApp::beatAt(const Prepared& p, uint32_t now) const {
   b.gridMs = now - _beatStart;
   b.frameMs = now - _frameStart;
   if (b.frameMs > b.gridMs) b.frameMs = b.gridMs;
+  b.frameLen = p.ms;
+  // A live draft repeats its frame (its own length), as the page's preview of
+  // one frame does: the beat grid and the fills start over every time.
+  if (_draftActive && p.ms) { b.frameMs %= p.ms; b.gridMs = b.frameMs; }
   return b;
 }
 
@@ -86,7 +90,7 @@ bool StopLightApp::renderBeat(const Prepared& p, uint32_t elapsedMs, const Face:
 
 void StopLightApp::preparePos(Prepared& p, int pos) {
   auto& sets = _store.sets();
-  if (_draftActive) { prepareFrame(p, _draft.l, _draft.mask(), 1000); p.bpm = _draftBpm; p.pos = 0; return; }
+  if (_draftActive) { prepareFrame(p, _draft.l, _draft.mask(), _draft.ms); p.bpm = _draftBpm; p.pos = 0; return; }
   if (sets.empty() || _current < 0 || _current >= (int)sets.size() || _playlist.empty()) {
     static const LightDef blank[3];
     prepareFrame(p, blank, 7, 1000); p.bpm = 0; p.pos = 0; return;

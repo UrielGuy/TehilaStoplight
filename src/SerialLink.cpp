@@ -202,6 +202,13 @@ void SerialLink::command(const String& line) {
   } else if (line == "STOP") {
     _app.clearDraft();
     reply("OK stopped");
+  } else if (line == "STA" || line.startsWith("STA ")) {   // debugging: also join a WiFi network (see AccessPoint.h)
+    reply("STA " + AccessPoint::station(line.length() > 4 ? line.substring(4) : String()));
+  } else if (line.startsWith("PROBES")) {   // debugging: how phones' connectivity checks are answered (see AccessPoint.h)
+    if (line.length() > 7) AccessPoint::probesOnline(line.substring(7) == "online" ? 1 : 0);
+    reply(String("PROBES ") + (AccessPoint::probesOnline() ? "online" : "captive"));
+  } else if (line.startsWith("WEBLOG")) {   // debugging: log every web request (see AccessPoint.h)
+    reply(String("WEBLOG ") + (AccessPoint::webLog(line.endsWith("0") ? 0 : 1) ? "on" : "off"));
   } else if (line == "SPACE") {
     reply("SPACE " + String(AnimStore::freeBytes()) + " " + String(AnimStore::totalBytes()));
   } else if (line == "LIST") {

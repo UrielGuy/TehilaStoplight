@@ -44,8 +44,17 @@ bool begin() {
   return true;
 }
 
-size_t totalBytes() { return LittleFS.totalBytes(); }
-size_t freeBytes() { const size_t t = LittleFS.totalBytes(), u = LittleFS.usedBytes(); return t > u ? t - u : 0; }
+size_t totalBytes() { static size_t t = LittleFS.totalBytes(); return t; }   // fixed; the call walks the file system too
+// usedBytes() walks the whole file system: ~0.5 s on the full 4.7 MB, with
+// the renderer stalled meanwhile (flash access), and /api/state asked for it
+// on every poll (2026-10-23). Kept until closeAll(), which precedes every change.
+static size_t s_used = 0;
+static bool s_usedValid = false;
+size_t freeBytes() {
+  if (!s_usedValid) { s_used = LittleFS.usedBytes(); s_usedValid = true; }
+  const size_t t = totalBytes();
+  return t > s_used ? t - s_used : 0;
+}
 String pathFor(const String& id) { return String(DIR_PATH) + "/" + id + ".anm"; }
 std::vector<Entry> list();
 bool exists(const String& id) {
@@ -167,6 +176,7 @@ void closeAll() {
   closeSlotFiles();
   if (s_fileMx) xSemaphoreGive(s_fileMx);
   s_listValid = false;
+  s_usedValid = false;
 }
 
 
