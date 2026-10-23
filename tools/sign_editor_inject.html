@@ -64,6 +64,7 @@ function drawSummary(s){const el=g('eSum'),S=s.summary,L=s.last||{};
   if(S.animsOnlyOnSign.length)p.push(`${S.animsOnlyOnSign.length} only on the sign (${list(S.animsOnlyOnSign)})`);const d=S.sets;if(!d.same)p.push('sets: '+[['changed','changed'],['added','new'],['removed','removed']].filter(([k])=>d[k].length).map(([k,w])=>`${d[k].length} ${w} (${list(d[k],4)})`).join(', '));
   if(S.settings.length)p.push('settings: '+S.settings.join(', '));lines.push('<span class="pill warn">differs from the sign</span>'+p.join(' · '))}
  if(s.rendererError)lines.push('<span class="pill bad">text engine</span><span class="err"></span>');
+ else if(/system font/.test(s.renderer||''))lines.push('<span class="pill warn">text preview</span>drawn in a system font: sizes and line breaks are close to the sign, not exact');
  el.innerHTML=lines.map(x=>`<div class="sumrow">${x}</div>`).join('');if(s.rendererError)el.querySelector('.err').textContent=s.rendererError}
 function drawMusic(s){const m=s.music;if(document.activeElement!==g('eMusic'))g('eMusic').value=m.dir||'';
  const n=m.tracks.length,bt=s.boardTracks;g('eMusicMsg').innerHTML=!m.dir?'Choose the folder that holds the files of the sign\'s SD card. They play as tracks 1, 2, 3… in name order (copy them to the card in that order).':!m.ok?'<span class="err">That folder is not there.</span>':

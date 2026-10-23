@@ -1067,6 +1067,7 @@ def main():
     ap.add_argument("--workspace", default=os.path.join(HERE, "gfx", "editor"))
     ap.add_argument("--wsl-distro", default=None, help="WSL distribution with g++ and python3 (default: the default one)")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--system-font", action="store_true", help="draw preview text in a system font (no WSL needed; sizes and line breaks only approximate)")
     a = ap.parse_args()
     for s in (sys.stdout, sys.stderr):
         try:
@@ -1075,6 +1076,13 @@ def main():
             pass
     H.ws = Workspace(a.workspace)
     H.R = Renderer(a.wsl_distro)
+    if a.system_font or (H.R.mode == "wsl" and not H.R.sizes()):
+        # Windows without WSL (and no tools/stopcli.exe): approximate text in a system font
+        try:
+            import sysfont_render
+            H.R = sysfont_render.SysFontRenderer()
+        except ImportError:
+            print("text previews need WSL, tools/stopcli.exe or Pillow (python -m pip install pillow)")
     H.jobs = Jobs()
     print(f"StopLight offline editor: http://localhost:{a.port}/   (workspace {H.ws.dir}; text engine: {H.R.describe()})")
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)

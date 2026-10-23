@@ -239,7 +239,7 @@ real address). Commit only when the user asks.
 ## Offline editor (tools/sign_editor.py, 2026-10-23)
 
 `python.exe tools/sign_editor.py` (default port 8095, `--port`, `--workspace`,
-`--wsl-distro`, `--no-browser`; never 8080/8090) is a local web app for when
+`--wsl-distro`, `--no-browser`, `--system-font`; never 8080/8090) is a local web app for when
 the WiFi is hard to reach: **Download** pulls everything from the sign once
 (WiFi or a USB port, picked in the editor card), the sign's own page
 (`src/WebPage.h`, read at every request) then edits a workspace folder
@@ -288,6 +288,14 @@ pushes it. The card is injected at serve time from
   <music dir> <target>` (headless Edge: no JS errors, sound timing, plan).
   `tools/local_server.py` takes `STOPLIGHT_SETS` / `STOPLIGHT_GFX` to act as
   a second, throwaway sign.
+
+On a PC without WSL (and no `tools/stopcli.exe`) previews and fit checks come
+from `tools/sysfont_render.py`: same RLE and API, text in Arial Bold (Pillow,
+basic layout + its own word-level bidi) so sizes and line breaks are only
+close; circles, rings, figures (parsed from Sprites.h) and beat graphics are
+exact. Chosen automatically when the WSL worker cannot start, or with
+`--system-font`. Pip packages for the editor: numpy, pyserial (cable),
+pillow (no WSL).
 
 ## Build, flash, monitor (from WSL)
 
