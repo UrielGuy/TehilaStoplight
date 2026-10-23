@@ -394,7 +394,13 @@ view with the Read tool.
 - Generated, do not edit by hand: `src/fonts/StopFonts.h`
   (`tools/gen_font.py`, DejaVu Sans Bold, 12 sizes 11–56 px, ASCII + Hebrew;
   Hebrew letters from `tools/fonts/heshbon-bold-alefalefalef.otf`, scaled to
-  DejaVu's cap height on a shared baseline, quarter-pixel grid fit)
+  DejaVu's cap height on a shared baseline, quarter-pixel grid fit; since
+  2026-10-23 the Latin letters A–Z/a–z come from `tools/fonts/High-School.ttf`
+  (GeronimoFonts, FontStruct Non-Commercial License; unicase, so lower case
+  shows capitals), its capitals scaled to exactly DejaVu's cap height, grid fit
+  that also penalises strokes thinner than cap/5, even 64/1024 em letter gaps.
+  It has no digits, punctuation or space: those stay DejaVu. Its K/X look
+  like H, R like A and V like U on the panel, most of all at small sizes)
   and `src/sprites/Sprites.h` (`tools/gen_sprites.py`, jointed-pose figures at
   64×96 plus the procedural 128×128 "eclipse" discs; a pose may carry a
   `second` figure and extra `shapes` for props such as the bike). Both
