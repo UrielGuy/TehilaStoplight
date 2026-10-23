@@ -1,5 +1,6 @@
 #include "SetStore.h"
 #include <Preferences.h>
+#include <esp_heap_caps.h>
 #include <algorithm>
 
 static const char* NS = "stoplight";
@@ -143,11 +144,12 @@ void SetStore::load() {
   p.begin(NS, false);   // read-write so the namespace is created on first boot
   size_t n = p.getBytesLength("sets");
   String json;
-  if (n > 0) {
-    std::vector<char> buf(n + 1);
-    p.getBytes("sets", buf.data(), n);
-    buf[n] = 0;
-    json = buf.data();
+  if (n > 0) {   // NVS buffers in internal RAM: a read into PSRAM failed ("nvs_get_blob fail: sets OTHER")
+    char* buf = (char*)heap_caps_malloc(n + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (buf) {
+      if (p.getBytes("sets", buf, n) == n) { buf[n] = 0; json = buf; }
+      free(buf);
+    }
   }
   p.end();
   _sets.clear();
@@ -183,9 +185,13 @@ String SetStore::toJson() const {
 bool SetStore::save() {
   String json = toJson();
   if (json.length() > MAX_JSON_BYTES) return false;
+  char* buf = (char*)heap_caps_malloc(json.length() + 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);   // see load()
+  if (!buf) return false;
+  memcpy(buf, json.c_str(), json.length() + 1);
   Preferences p;
   p.begin(NS, false);
-  p.putBytes("sets", json.c_str(), json.length());
+  const size_t wrote = p.putBytes("sets", buf, json.length());
   p.end();
-  return true;
+  free(buf);
+  return wrote == json.length();
 }

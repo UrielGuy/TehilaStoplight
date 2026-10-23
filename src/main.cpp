@@ -118,12 +118,6 @@ SerialLink usbLink(USBSerial, app);     // ... and over the native USB socket
 Mp3Player mp3;   // DIYables Mini MP3 on UART1 (Mp3Pins), optional
 
 void setup() {
-  // Internal RAM is what WiFi needs (its buffers, the WPA handshake), and the
-  // Arduino SDK reserves none of it once PSRAM is on: only allocations of
-  // 4 KB and more went to PSRAM, so web replies, Strings and JSON slowly
-  // fragmented internal RAM until phones could no longer join (2026-10-23:
-  // 32 KB free, largest block 4 KB). From 512 bytes up, PSRAM it is.
-  heap_caps_malloc_extmem_enable(512);
   Serial.setRxBufferSize(4096);   // serial animation uploads arrive in 1 KB chunks
   Serial.begin(115200);
   USBSerial.setRxBufferSize(4096);
@@ -155,6 +149,14 @@ void setup() {
   bootHeap[0] = ESP.getFreeHeap();
   store.load();
   AnimStore::begin();
+  // Internal RAM is what WiFi needs (its buffers, the WPA handshake), and the
+  // Arduino SDK reserves none of it once PSRAM is on: only allocations of
+  // 4 KB and more went to PSRAM, so web replies, Strings and JSON slowly
+  // fragmented internal RAM until phones could no longer join (2026-10-23:
+  // 32 KB free, largest block 4 KB). From 512 bytes up, PSRAM it is - but
+  // only from here on: with it on before display.begin() the panels' DMA
+  // memory landed in PSRAM and all lights stayed black.
+  heap_caps_malloc_extmem_enable(512);
   bootHeap[1] = ESP.getFreeHeap();
   AnimStore::beginDecoders();   // two background decoder tasks, one per core
   bootHeap[2] = ESP.getFreeHeap();
