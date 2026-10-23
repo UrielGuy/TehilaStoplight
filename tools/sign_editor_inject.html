@@ -31,7 +31,7 @@
       <div class="row" style="margin-top:0"><input type="text" id="eMusic" placeholder="C:\Music\sign card" style="flex:1;min-width:10em;font-size:15px"><button class="small" id="eMusicSet">Use</button><button class="small" id="eBrowse">Browse&hellip;</button></div>
       <div class="msg" id="eMusicMsg"></div><ol id="eTracks"></ol></div>
     <div><h3>More animations</h3>
-      <p class="msg" style="margin-top:0">Add <b>.anm</b> files in &ldquo;Your animations&rdquo; below, or make one in the <a id="eStudio" target="_blank" rel="noopener">animation studio</a> and pick &ldquo;into the offline editor&rdquo; as its target. Clips the studio left on this PC:</p>
+      <p class="msg" style="margin-top:0">Make one from a GIF, a video or a link in <a href="#stuCard" id="eStudio">New animation</a> below, or add <b>.anm</b> files in &ldquo;Your animations&rdquo;. Clips the separate animation studio left on this PC:</p>
       <ul class="imp" id="eImport"></ul></div>
   </div>
 </div>
@@ -79,7 +79,7 @@ function drawJob(j){const busy=j.state==='running';['eDown','eCheck','ePlan','eG
   if(j.kind==='check'){PLAN=r.plan;drawPlan();if(!showPlanAfterCheck)g('eMsg').textContent=PLAN.nothing?'The sign has exactly the workspace\'s content.':`The sign differs: ${PLAN.steps.length} step${PLAN.steps.length>1?'s':''} would bring it up to date (see below).`}}
  else if(busy)g('eMsg').textContent=''}
 async function status(){const s=await api('/api/editor/status');if(s.error){g('eMsg').textContent=s.error;return setTimeout(status,3000)}
- ST=s;g('eWs').textContent=s.workspace;g('eStudio').href=s.studio;if(!g('eTarget').options.length)fillTargets(s.target);drawSummary(s);drawMusic(s);drawJob(s.job);
+ ST=s;g('eWs').textContent=s.workspace;if(!g('eTarget').options.length)fillTargets(s.target);drawSummary(s);drawMusic(s);drawJob(s.job);
  setTimeout(status,s.job.state==='running'?500:4000)}
 /* ---------- download / compare / upload ---------- */
 let showPlanAfterCheck=false;
@@ -136,5 +136,77 @@ const pageMp3Options=mp3Options;mp3Options=function(){pageMp3Options();const tr=
 const pageRender=render;render=function(s){pageRender(s);if(s&&s.mp3){g('mp3msg').textContent=s.mp3.present?`${s.mp3.tracks} track${s.mp3.tracks===1?'':'s'} in the music folder (they play in the preview). Volume and settings are uploaded with the sets.`:'No music folder chosen: set it in the editor card above. Volume and settings are uploaded with the sets.'}
  g('mp3Rescan').textContent='Rescan folder'};
 status();ports();
+})();
+</script>
+<!-- The New animation card: the animation studio (the fragment() of tools/anim_studio.py, put in below the
+     card text by sign_editor.py) converting into the workspace, with the space the clip takes on the sign after the next Upload. -->
+<style>
+#stuCard .stu{margin-top:12px}#stuCard .stu .stu-sec{background:#191d22}
+#stuWs .fitline{font-size:14px;margin:8px 0 2px}#stuWs .fitline.err{color:var(--bad)}#stuWs .fitline.okc{color:var(--green)}
+</style>
+<div class="card" id="stuCard" style="grid-column:1/-1">
+  <h2>New animation &middot; from a GIF, a video or a link</h2>
+  <p class="msg" style="margin-top:0">Converted on this PC into the workspace. The size shown is what the sign stores; nothing reaches the sign until <b>Upload</b>.</p>
+<!--STUDIO-->
+</div>
+<section class="stu-sec" id="stuWs"><h3>5 &middot; Into the workspace</h3>
+  <div class="row"><label>Name <input type="text" id="stuName" maxlength="24" placeholder="a-z 0-9 - _"></label><button class="pri" id="stuAdd" disabled>Add to workspace</button></div>
+  <div class="msg" id="stuAddMsg"></div>
+  <h3 style="margin-top:14px">The sign after the next Upload</h3>
+  <div class="fitline" id="stuFit"></div>
+  <div class="stbar" id="stuBar" title="animation storage on the sign"></div>
+  <div class="msg" id="stuSpMsg">Reading the workspace…</div>
+  <ul class="stlist" id="stuList"></ul>
+</section>
+<script>
+(()=>{
+const g=id=>document.getElementById(id),A=AnimStudio,KB=A.KB,pct=A.pct,cost=b=>Math.ceil(b/4096)*4096;
+/* the card goes just above "Your animations"; the workspace section into the studio's output slot */
+const wrap=document.querySelector('.wrap'),yours=[...document.querySelectorAll('h2')].find(h=>h.textContent==='Your animations');
+wrap.insertBefore(g('stuCard'),yours?yours.closest('.card'):null);g('stuOut').appendChild(g('stuWs'));
+g('eStudio').onclick=e=>{e.preventDefault();g('stuCard').scrollIntoView({behavior:'smooth'})};
+/* names as AnimStore::sanitizeId (sign_editor.anim_id) */
+const clean=s=>{let o='';for(const ch of s.trim().toLowerCase()){if(o.length>=24)break;if(/[a-z0-9_-]/.test(ch))o+=ch;else if(ch===' '||ch==='.')o+='-'}return o};
+let SP=null,added='',spT=null;
+const ST=A({api:'/api/studio',
+ onOpened:j=>{if(!g('stuName').value)g('stuName').value=clean(j.name||'')},
+ onConverted:j=>{g('stuAdd').disabled=false;added='';g('stuAddMsg').textContent='';space()}}),S=ST.state;
+async function space(){const q=new URLSearchParams({work:added?'':(S.work||''),name:clean(g('stuName').value),deleteRemoved:g('eDelRemoved').checked?1:0});
+ const r=await fetch('/api/editor/space?'+q,{cache:'no-store'}).then(r=>r.json()).catch(()=>null);if(r){SP=r;draw()}}
+const spaceSoon=()=>{clearTimeout(spT);spT=setTimeout(space,250)};window.__stuSpace=()=>SP;window.__stu=S;   /* for tools/sign_editor_ui.py */
+function draw(){const P=SP,T=P.total,C=P.clip,B=P.base,H=P.holdings.slice().sort((a,b)=>b.bytes-a.bytes),fit=g('stuFit');
+ const used=H.reduce((n,a)=>n+cost(a.bytes),0),free=(C||B).freeAfter,src=P.source==='none'?' Not downloaded from a sign yet, so the file system\'s own share is not counted.':P.source==='compare'?' File system share from the last Compare.':'';
+ g('stuSpMsg').textContent=`${KB(T)} on the sign: ${H.length} animation${H.length===1?' takes':'s take'} ${KB(used)} (${pct(used,T)})${P.source==='none'?'':', the file system '+KB(P.overhead)}, ${free>=0?KB(free)+' free':KB(-free)+' too much'}.${src}`;
+ const segs=[],rows=[];let k=0;
+ H.forEach(a=>{const isNew=a.kind==='new',col=isNew?'':A.hue(k++);segs.push({bytes:cost(a.bytes),cls:isNew?(C&&C.fits?'new':'over'):'',col,title:`${isNew?(C.name||'this clip'):a.id}: ${KB(a.bytes)}`});
+  const row={col:isNew?'repeating-linear-gradient(45deg,#f2a33a 0 3px,#9c5f1c 3px 6px)':col,name:isNew?`${C.name||'(no name yet)'} · this clip`:a.id,size:`${KB(a.bytes)} · ${pct(cost(a.bytes),T)}`,
+   sub:isNew?(C.replaces!=null?`replaces the workspace's ${C.name} (${KB(C.replaces)})`:'new in the workspace'):a.kind==='sign'?'only on the sign: stays there unless the upload plan deletes it':'in the workspace',cls:isNew?'new':''};
+  if(isNew)rows.unshift(row);else rows.push(row)});
+ segs.push({bytes:P.overhead,cls:'fs',title:`file system: ${KB(P.overhead)}`});A.bar(g('stuBar'),T,segs);
+ if(!rows.length)rows.push({name:'No animations in the workspace yet.'});A.rows(g('stuList'),rows);
+ fit.className='fitline';
+ if(C){if(C.fits){fit.classList.add('okc');fit.textContent=`Fits: ${KB(C.bytes)}${C.name?' as "'+C.name+'"':''}${C.replaces!=null?' (replacing the workspace\'s copy)':''} leaves ${KB(C.freeAfter)} free on the sign (${pct(Math.max(0,C.freeAfter),T)}).`}
+  else{fit.classList.add('err');fit.textContent=`Does not fit: ${KB(C.missing)} missing. Shorten the clip, lower the frame rate, or delete animations from the workspace.`}
+  if(!B.fits)fit.textContent+=` The workspace is already ${KB(B.missing)} over without it.`}
+ else fit.textContent=B.fits?(added?`"${added}" is in the workspace. `:'')+`Convert a clip to see its size and whether it fits.`:`The workspace does not fit on the sign: ${KB(B.missing)} missing.`;
+ if(!B.fits&&!C)fit.classList.add('err')}
+g('stuName').addEventListener('input',()=>{if(added&&clean(g('stuName').value)!==added)added='';spaceSoon()});
+g('eDelRemoved').addEventListener('change',spaceSoon);
+async function add(body){return fetch('/api/editor/addanim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({error:String(e)}))}
+const say=(t,err)=>{const m=g('stuAddMsg');m.textContent='';const s=document.createElement('span');if(err)s.className='err';s.textContent=t;m.appendChild(s)};
+const ask=(name,o)=>confirm(`The workspace already has an animation called "${name}"${o?` (${KB(o.bytes)}${o.ms?', '+(o.ms/1000).toFixed(1)+' s':''})`:''}. Replace it? Sets that use it will show the new one.\n\nCancel to keep it, then change the name.`);
+g('stuAdd').onclick=async()=>{const name=clean(g('stuName').value);if(!S.work){say('Convert a clip first.',1);return}
+ if(!name){say('Give the animation a name first.',1);g('stuName').focus();return}g('stuName').value=name;
+ const old=ANIMS.find(a=>a.id===name);let replace=false;
+ if(old){if(!ask(name,old)){say('Not added: change the name to keep both.');g('stuName').focus();return}replace=true}
+ let r=await add({work:S.work,name,replace});
+ if(r.exists&&!replace){if(!ask(name,r)){say('Not added: change the name to keep both.');return}r=await add({work:S.work,name,replace:true})}
+ if(r.error){say(r.error,1);return}
+ delete ANIMDATA[r.id];added=r.id;say(`Added to the workspace as "${r.id}" (${KB(r.bytes)}). Pick it in a light's graphic list; it goes to the sign with the next Upload.`);
+ lastState='';load();space()};
+/* the workspace's animations change (add, delete, rename, download): draw again */
+const pageRender2=render;render=function(s){pageRender2(s);spaceSoon()};
+setInterval(()=>{if(!document.hidden)space()},10000);
+space();
 })();
 </script>

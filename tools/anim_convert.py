@@ -118,7 +118,7 @@ def download(url, tmp, max_seconds=60, progress=None, max_res=DOWNLOAD_RES):
         return got
     files = [f for f in os.listdir(tmp) if f.startswith("src.")]
     if not files:
-        sys.exit("download failed")
+        raise RuntimeError("download failed")
     return os.path.join(tmp, files[0])
 
 
@@ -560,7 +560,7 @@ def upload_http(base, name, data, progress=None):
 
 def convert(src, shape="circle", fps=12, start=0, duration=0, fit="fill", crop=None, dither=False,
             threshold=0.5, gain=1.0, max_frames=150, progress=None, compress=True, rotate=0):
-    """Library entry point (used by anim_studio.py): returns (anm bytes, frames, distinct)."""
+    """Library entry point (used by anim_studio.Studio, also in tools/sign_editor.py): returns (anm bytes, frames, distinct)."""
     h = 384 if shape == "full" else 128
     frames = read_frames(src, h, fps, start, duration, fit, crop, progress, rotate)[:max_frames]
     px = []
@@ -612,7 +612,10 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         src = a.source
         if re.match(r"https?://", src):
-            src = download(src, tmp, a.download_seconds, print_progress, a.download_res)
+            try:
+                src = download(src, tmp, a.download_seconds, print_progress, a.download_res)
+            except RuntimeError as e:
+                sys.exit(str(e))
             base_name = a.name or "clip"
         else:
             if not os.path.exists(src):

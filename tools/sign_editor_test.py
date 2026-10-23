@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """End-to-end test of tools/sign_editor.py over WiFi, with the local harness
 (tools/local_server.py) as the sign: download, edit, compare, plan, upload,
-resume, music folder, preview. Plus unit tests of the upload plan (space,
-order). Everything runs in temporary folders on free ports; the real
+resume, music folder, preview, the New animation card's endpoints. Plus unit
+tests of the upload plan (space, order) and of the space a new clip takes.
+Everything runs in temporary folders on free ports; the real
 tools/local_sets.json and tools/gfx are not touched.
 
     python3 tools/sign_editor_test.py        # WSL (or any Linux with g++)
+    python.exe tools/sign_editor_test.py --studio   # only the card's conversion (needs imageio-ffmpeg)
+
+The conversion part runs whenever this Python has ffmpeg (imageio-ffmpeg);
+under WSL it usually has not, and says so.
 """
 import json, os, shutil, socket, subprocess, sys, tempfile, time, urllib.request, uuid
 
@@ -107,6 +112,158 @@ def plan_units():
     p = se.make_plan(ws, look, True)
     check("plan: a set using a missing animation is refused", not p["ok"] and any("gone" in e for e in p["errors"]))
     shutil.rmtree(tmp, ignore_errors=True)
+
+
+def space_units():
+    print("--- space a new clip takes (New animation card)")
+    tmp = tempfile.mkdtemp(prefix="edspace-")
+    ws = se.Workspace(tmp)
+    a, b = anm(2, 100000), anm(2, 50000)
+    open(ws.anim_path("a"), "wb").write(a)
+    open(ws.anim_path("b"), "wb").write(b)
+    T, O, cost = se.ANIM_SPACE, 40960, se.cost
+    F = T - O - cost(len(a)) - cost(30000)   # the sign has a (as here) and c, plus O of file system
+    ws.save_manifest({"anims": {"a": {"bytes": len(a), "crc": se.crc32(a)}, "c": {"bytes": 30000, "crc": 1}}, "free": F, "total": T,
+                      "sets": [], "settings": {}, "download": {"at": 1, "via": "test"}})
+    r = se.space_report(ws)
+    check("space: overhead from board.json", r["overhead"] == O and r["total"] == T and r["source"] == "board.json", r)
+    check("space: the workspace alone (b goes up, c stays on the sign)", r["base"]["fits"] and r["base"]["freeAfter"] == F - cost(len(b))
+          and {(h["id"], h["kind"]) for h in r["holdings"]} == {("a", "workspace"), ("b", "workspace"), ("c", "sign")} and r["clip"] is None, r)
+    r = se.space_report(ws, 200000, "New Clip")
+    C = r["clip"]
+    check("space: a new clip", C["name"] == "new-clip" and C["fits"] and C["missing"] == 0 and C["cost"] == cost(200000) and C["replaces"] is None
+          and C["freeAfter"] == F - cost(len(b)) - cost(200000) and any(h["id"] == "new-clip" and h["kind"] == "new" for h in r["holdings"]), r)
+    r = se.space_report(ws, 200000, "new-clip", delete_removed=True)
+    check("space: with 'delete the animations not in the workspace' c's room counts", r["clip"]["freeAfter"] == F - cost(len(b)) - cost(200000) + cost(30000)
+          and not any(h["id"] == "c" for h in r["holdings"]), r)
+    r = se.space_report(ws, 200000, "a")
+    check("space: replacing a workspace animation frees its old blocks", r["clip"]["replaces"] == len(a) and r["clip"]["freeAfter"] == F - cost(len(b)) + cost(len(a)) - cost(200000)
+          and [h["kind"] for h in r["holdings"] if h["id"] == "a"] == ["new"], r)
+    room = F - cost(len(b))   # b (smaller) goes up first, the clip last
+    r = se.space_report(ws, room - se.MARGIN, "big")
+    check("space: exactly fits with the upload margin", r["clip"]["fits"] and r["clip"]["missing"] == 0, r["clip"])
+    r = se.space_report(ws, room - se.MARGIN + 1000, "big")
+    check("space: 1000 bytes too big -> 1000 missing", not r["clip"]["fits"] and r["clip"]["missing"] == 1000 and r["base"]["fits"], r["clip"])
+    r = se.space_report(ws, 120000, "")
+    check("space: a clip without a name yet", r["clip"]["name"] == "" and r["clip"]["fits"] and any(h["kind"] == "new" for h in r["holdings"]), r["clip"])
+    se.LOOK.update({"anims": [{"id": "a", "bytes": len(a)}], "free": F + 12345, "total": T, "sets": [], "settings": {}, "sums": {}, "via": "cmp", "kind": "wifi", "at": 2})
+    r = se.space_report(ws)
+    check("space: a Compare newer than board.json wins", r["source"] == "compare" and r["base"]["freeAfter"] == F + 12345 - cost(len(b)), r)
+    se.LOOK.clear()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def studio_endpoints(ed, wsd):
+    """The New animation card's server side, without converting (a clip is put
+    where a conversion leaves it)."""
+    print("--- New animation card: endpoints")
+    page = req(ed, "GET", "/")[1]
+    check("page has the New animation card and the shared studio script", b'id="stuCard"' in page and b"window.AnimStudio=function" in page and b"<!--STUDIO-->" not in page)
+    c, d = req(ed, "GET", "/api/studio/deps")
+    check("deps reported", c == 200 and isinstance(d.get("ffmpeg"), bool) and isinstance(d.get("ytdlp"), bool), d)
+    if not d["ffmpeg"]:
+        c, r = req(ed, "POST", "/api/studio/open-file", raw=b"GIF89a", headers={"X-Filename": "x.gif"})
+        check("without ffmpeg: a clear error with the pip command", c == 400 and "pip install" in r.get("error", "") and "imageio-ffmpeg" in r["error"], r)
+    if not d["ytdlp"]:
+        c, r = req(ed, "POST", "/api/studio/open-url", {"url": "https://example.com/v"})
+        check("without yt-dlp: links say what to install", c == 400 and "pip install" in r.get("error", ""), r)
+    check("progress of an unknown request is empty", req(ed, "GET", "/api/studio/progress?t=nope")[1] == {})
+    check("no preview video for an unknown source", req(ed, "GET", "/api/studio/media/0123456789.mp4")[0] == 404)
+    c, r = req(ed, "POST", "/api/studio/convert", {"id": "0123456789"})
+    check("convert of an unknown source", c == 400 and "open it again" in r.get("error", ""), r)
+    work = os.path.join(wsd, "studio", "work")
+    os.makedirs(work, exist_ok=True)
+    data = anm(3, 77777)
+    open(os.path.join(work, "abc123def0.anm"), "wb").write(data)
+    base = req(ed, "GET", "/api/editor/space")[1]
+    sp = req(ed, "GET", "/api/editor/space?work=abc123def0&name=Studio%20Clip")[1]
+    C = sp["clip"]
+    check("space with the converted clip: its size and blocks", C and C["name"] == "studio-clip" and C["bytes"] == len(data) and C["cost"] == se.cost(len(data)), sp)
+    check("space: free after = without it - its blocks", C and C["freeAfter"] == base["base"]["freeAfter"] - se.cost(len(data)) and sp["total"] == base["total"], (base, sp))
+    c, r = req(ed, "POST", "/api/editor/addanim", {"work": "abc123def0", "name": ""})
+    check("add without a name is refused", c == 400 and "name" in r.get("error", ""), r)
+    c, r = req(ed, "POST", "/api/editor/addanim", {"work": "fff", "name": "x"})
+    check("add without a conversion is refused", c == 400, r)
+    c, r = req(ed, "POST", "/api/editor/addanim", {"work": "abc123def0", "name": "Studio Clip"})
+    check("add to the workspace", c == 200 and r["id"] == "studio-clip" and r["bytes"] == len(data) and any(a["id"] == "studio-clip" for a in r["anims"]), r)
+    check("the workspace file is the converted clip", open(os.path.join(wsd, "anims", "studio-clip.anm"), "rb").read() == data)
+    S = req(ed, "GET", "/api/editor/status")[1]["summary"]
+    check("the summary lists it as new (it goes up with the next Upload)", "studio-clip" in S.get("animsAdded", []), S)
+    data2 = anm(4, 1234)
+    open(os.path.join(work, "abc123def0.anm"), "wb").write(data2)
+    c, r = req(ed, "POST", "/api/editor/addanim", {"work": "abc123def0", "name": "studio-clip"})
+    check("same name again: asks first (409)", c == 409 and r.get("exists") and r.get("bytes") == len(data), r)
+    sp = req(ed, "GET", "/api/editor/space?work=abc123def0&name=studio-clip")[1]
+    check("space: the clip would replace the workspace's copy", sp["clip"]["replaces"] == len(data), sp["clip"])
+    c, r = req(ed, "POST", "/api/editor/addanim", {"work": "abc123def0", "name": "studio-clip", "replace": True})
+    check("same name, replace: new content, old copy in the trash", c == 200 and open(os.path.join(wsd, "anims", "studio-clip.anm"), "rb").read() == data2
+          and any(os.path.exists(os.path.join(wsd, "trash", t, "studio-clip.anm")) for t in os.listdir(os.path.join(wsd, "trash"))), r)
+
+
+def studio_convert():
+    """A real conversion through the card's endpoints (needs ffmpeg in this Python)."""
+    import anim_studio
+    if not anim_studio.deps()["ffmpeg"]:
+        print("--- New animation card: conversion skipped (no imageio-ffmpeg in this Python; run python.exe tools/sign_editor_test.py --studio)")
+        return
+    print("--- New animation card: conversion")
+    import threading
+    import anim_convert as ac
+    tmp = tempfile.mkdtemp(prefix="edstudio-")
+    wsd, clip = os.path.join(tmp, "ws"), os.path.join(tmp, "test clip.mp4")
+    subprocess.run([ac.ffmpeg_exe(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=duration=20:size=960x540:rate=25", "-pix_fmt", "yuv420p", clip], check=True)
+    ep = free_port()
+    ed = f"http://127.0.0.1:{ep}"
+    proc = subprocess.Popen([sys.executable, os.path.join(HERE, "sign_editor.py"), "--port", str(ep), "--workspace", wsd, "--no-browser"],
+                            stdout=subprocess.DEVNULL, stderr=open(os.path.join(tmp, "editor.log"), "w"))
+    try:
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(ed + "/api/state", timeout=2).read()
+                break
+            except Exception:
+                time.sleep(0.2)
+        phases, stop = set(), []
+
+        def poll(tok):
+            while not stop:
+                p = req(ed, "GET", "/api/studio/progress?t=" + tok)[1]
+                if p:
+                    phases.add(p["phase"])
+                time.sleep(0.03)
+        threading.Thread(target=poll, args=("t1",), daemon=True).start()
+        c, o = req(ed, "POST", "/api/studio/open-file", raw=open(clip, "rb").read(), headers={"X-Filename": "test%20clip.mp4", "X-Token": "t1"})
+        check("open a video file", c == 200 and o.get("name") == "test clip" and len(o.get("id", "")) == 10, o)
+        threading.Thread(target=poll, args=("t2",), daemon=True).start()
+        for shape, crop in (("circle", [0.2, 0, 0.5, 1]), ("full", [0.4, 0, 0.2, 1])):
+            c, r = req(ed, "POST", "/api/studio/convert", {"id": o["id"], "shape": shape, "fps": 12, "start": 1, "duration": 3, "crop": crop}, headers={"X-Token": "t2", "Content-Type": "application/json"})
+            path = os.path.join(wsd, "studio", "work", o["id"] + ".anm")
+            data = open(path, "rb").read() if os.path.exists(path) else b""
+            check(f"convert ({shape}): reported size = the .anm file", c == 200 and r["bytes"] == len(data) > 0 and r["format"] == data[3] and 35 <= r["frames"] <= 37, {k: v for k, v in r.items() if k != "anm"})
+            h = se.anim_header(data)
+            check(f"convert ({shape}): the file's picture size", h and (h["w"], h["h"]) == ((128, 384) if shape == "full" else (128, 128)), h)
+            sp = req(ed, "GET", f"/api/editor/space?work={o['id']}&name=clip-{shape}")[1]
+            check(f"convert ({shape}): fit numbers", sp["clip"]["bytes"] == len(data) and sp["clip"]["fits"] and sp["clip"]["freeAfter"] == se.ANIM_SPACE - se.cost(len(data)) - sum(se.cost(a["bytes"]) for a in req(ed, "GET", "/api/state")[1]["anims"]), sp["clip"])
+            c, a = req(ed, "POST", "/api/editor/addanim", {"work": o["id"], "name": f"clip-{shape}"})
+            check(f"convert ({shape}): added to the workspace", c == 200 and a["bytes"] == len(data), a)
+        # A still, flat clip: format 3's 7.4 KB model costs more than it saves, so the converter keeps format 2.
+        solid = os.path.join(tmp, "solid.gif")
+        subprocess.run([ac.ffmpeg_exe(), "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:size=320x240:duration=1:rate=10", solid], check=True)
+        c, s2 = req(ed, "POST", "/api/studio/open-file", raw=open(solid, "rb").read(), headers={"X-Filename": "solid.gif"})
+        c, r = req(ed, "POST", "/api/studio/convert", {"id": s2.get("id"), "shape": "circle", "fps": 12}, headers={"Content-Type": "application/json"})
+        path = os.path.join(wsd, "studio", "work", str(s2.get("id")) + ".anm")
+        data = open(path, "rb").read() if os.path.exists(path) else b""
+        check("a tiny clip stays format 2 (smaller), size = the file", c == 200 and r["format"] == 2 == data[3] and r["bytes"] == len(data), {k: v for k, v in r.items() if k != "anm"})
+        stop.append(1)
+        check("progress reported (preview, frames, colours or compressing)", {"prepare", "decode"} <= phases and bool({"colours", "encode"} & phases), phases)
+        st = req(ed, "GET", "/api/state")[1]
+        check("both clips in the workspace's list", {a["id"]: a["full"] for a in st["anims"]} == {"clip-circle": False, "clip-full": True}, st["anims"])
+    finally:
+        proc.terminate()
+        proc.wait(5)
+        if FAILS:
+            print("  editor log:", open(os.path.join(tmp, "editor.log")).read()[-1500:])
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def e2e():
@@ -239,6 +396,7 @@ def e2e():
         for t in ("STOP", "%D7%99%D7%95%D7%9D%20%D7%94%D7%95%D7%9C%D7%93%D7%AA%20%D7%A9%D7%9E%D7%97", "a%20b%20c%20d%20e%20f%20g%20h"):
             q = f"/api/check?text={t}&light=1&size=30"
             check(f"check as the harness's stopcli ({t[:12]})", req(ed, "GET", q)[1] == req(sign, "GET", q)[1])
+        studio_endpoints(ed, wsd)
     finally:
         for p in procs:
             p.terminate()
@@ -307,7 +465,13 @@ def e2e_serial(loss):
 
 
 if __name__ == "__main__":
+    if "--studio" in sys.argv:   # Windows Python: just the card's conversion
+        studio_convert()
+        print("FAILED: " + ", ".join(FAILS) if FAILS else "all passed")
+        sys.exit(1 if FAILS else 0)
     plan_units()
+    space_units()
+    studio_convert()
     e2e()
     e2e_serial(0.0)
     e2e_serial(0.02)

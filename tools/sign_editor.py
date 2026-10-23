@@ -10,19 +10,26 @@ The page is the sign's own page (src/WebPage.h, read at every request so it
 always matches the firmware), answered from a workspace folder instead of the
 board, plus an editor card injected at serve time: target (WiFi or a USB
 port), Download, Compare, Upload with a plan, the music folder, and imports
-from the animation studio. Workspace (default tools/gfx/editor/, git-ignored):
+from the animation studio; and a "New animation" card, the animation studio
+(tools/anim_studio.py) built in: open a GIF, a video or a link, crop, trim,
+convert, see the encoded size and whether it fits next to the workspace's
+other animations, and add it to the workspace. Workspace (default
+tools/gfx/editor/, git-ignored):
     workspace.json   sets, settings, volume, music folder, target
     anims/<id>.anm   the animations
     board.json       what the sign had at the last download / upload (sizes, CRC32s,
                      sets, settings), so the editor can tell what changed
     incoming/        a download in progress (resumed per file)
-    trash/<time>/    what a download or a delete replaced
+    trash/<time>/    what a download, a delete or a replacing add replaced
+    studio/          the New animation card's sources and converted clips (the newest 8)
 
 Runs best under Windows Python (serial ports and the sign's WiFi are only
 visible there). Texts are laid out and previews drawn by
 tools/stoplight_render.py, a pure-Python port of the firmware's text engine
 (fonts and figures read from the generated headers in src/), so nothing
-needs compiling. Needs numpy, plus pyserial for the USB cable.
+needs compiling. Needs numpy, plus pyserial for the USB cable; the New
+animation card needs imageio-ffmpeg (and yt-dlp for links), looked up only
+when used: the card says how to install what is missing.
 """
 import argparse, base64, email.parser, email.policy, json, mimetypes, os, re, shutil, struct, sys
 import threading, time, traceback, urllib.parse, webbrowser, zlib
@@ -33,8 +40,9 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 ANIM_SPACE = 0x4B0000          # the LittleFS partition (partitions.csv)
+BLOCK = 4096                   # LittleFS block: a file takes whole blocks
+MARGIN = 8192                  # an upload needs this much more room than the file (as the studio and the plan check)
 MAX_TEXT_BYTES = 720
-STUDIO_URL = "http://localhost:8090/"
 FX = {"fx:quarters", "fx:pulse"}
 
 
@@ -45,6 +53,7 @@ FX = {"fx:quarters", "fx:pulse"}
 # describe(), error, sizes(), sprites(), check(light, text, size) and
 # safe_run(["rle"|"preview", "key=value", ...]).
 from stoplight_render import Renderer   # noqa: E402
+import anim_studio                       # noqa: E402  (numpy only; ffmpeg / yt-dlp are looked up when used)
 
 
 # ======================================================================= workspace
@@ -78,6 +87,11 @@ def anim_header(b):
 
 def crc32(b):
     return zlib.crc32(b) & 0xFFFFFFFF
+
+
+def cost(n):
+    """Bytes a file of n bytes takes in LittleFS (whole blocks)."""
+    return (n + BLOCK - 1) // BLOCK * BLOCK
 
 
 def write_atomic(path, data):
@@ -159,8 +173,8 @@ class Workspace:
         total = man.get("total") or ANIM_SPACE
         overhead = 0
         if man.get("free") is not None and man.get("anims"):
-            overhead = max(0, total - man["free"] - sum((a["bytes"] + 4095) // 4096 * 4096 for a in man["anims"].values()))
-        used = sum((a["bytes"] + 4095) // 4096 * 4096 for a in self.anim_info().values())
+            overhead = max(0, total - man["free"] - sum(cost(a["bytes"]) for a in man["anims"].values()))
+        used = sum(cost(a["bytes"]) for a in self.anim_info().values())
         return max(0, total - overhead - used), total
 
     def to_trash(self, path, sub=None):
@@ -240,15 +254,16 @@ def summary(ws):
     return out
 
 
-def make_plan(ws, look, delete_removed):
+def make_plan(ws, look, delete_removed, local=None):
     """The upload, step by step, with the space it needs. Order: animations the
     sign's current sets do not use are deleted first, then animations go up
     (replacements that shrink first), then the sets, then the remaining
     deletes, then the settings, so the sign never shows a set whose animation
-    is missing."""
+    is missing. local: the workspace's animations (default ws.anim_info()),
+    e.g. with a clip that is not added yet. Every upload step carries the
+    room it has ("room": free space with the old copy gone)."""
     import sign_link as sl
-    cost = lambda n: (n + 4095) // 4096 * 4096
-    local = ws.anim_info()
+    local = ws.anim_info() if local is None else local
     board = {a["id"]: a for a in look["anims"]}
     man = ws.manifest().get("anims", {})
     sums = look.get("sums") or {}
@@ -294,15 +309,16 @@ def make_plan(ws, look, delete_removed):
         free += cost(board[d]["bytes"])
     for p in sorted(puts, key=lambda p: (0 if p["op"] == "replace" and p["bytes"] <= p["old"] else 1, p["bytes"])):
         room = free + (cost(p["old"]) if p["old"] else 0)   # a replacement that does not fit deletes the old copy first
-        if p["bytes"] + 8192 > room and late:
+        if p["bytes"] + MARGIN > room and late:
             for d in late:
                 steps.append({"op": "delete", "id": d, "bytes": board[d]["bytes"], "note": "removed here (early, to make room: the sign's current sets lose it until the new sets arrive)"})
                 free += cost(board[d]["bytes"])
                 room += cost(board[d]["bytes"])
             late = []
-        p["fits"] = p["bytes"] + 8192 <= room
+        p["room"] = room
+        p["fits"] = p["bytes"] + MARGIN <= room
         if not p["fits"]:
-            errors.append(f"{p['id']} ({p['bytes'] // 1024} KB) does not fit: {max(0, room - 8192) // 1024} KB free at that point")
+            errors.append(f"{p['id']} ({p['bytes'] // 1024} KB) does not fit: {max(0, room - MARGIN) // 1024} KB free at that point")
         steps.append(p)
         free = room - cost(p["bytes"]) if p["old"] else free - cost(p["bytes"])
     sd = sets_diff(sets, look["sets"])
@@ -328,6 +344,68 @@ def make_plan(ws, look, delete_removed):
     return {"steps": steps, "errors": errors, "warnings": warnings, "ok": not errors, "nothing": not steps,
             "freeBefore": look.get("free"), "freeAfter": free if look.get("free") is not None else None, "total": look.get("total"),
             "onlyOnSign": only_sign, "deleteRemoved": delete_removed, "via": look.get("via"), "kind": look.get("kind")}
+
+
+LOOK = {}   # the last look at the sign, for re-planning without asking it again
+
+
+def planned_look(ws):
+    """The sign as far as the editor knows it without asking: the last Compare
+    if it is newer than the last download / upload, else board.json (an empty
+    sign of ANIM_SPACE when the workspace never saw one)."""
+    m = ws.manifest()
+    seen = max([(m.get(k) or {}).get("at") or 0 for k in ("download", "upload")])
+    if LOOK and LOOK.get("at", 0) >= seen and LOOK.get("free") is not None:
+        return dict(LOOK, source="compare")
+    anims = [{"id": k, "bytes": v.get("bytes", 0)} for k, v in sorted((m.get("anims") or {}).items())]
+    total = m.get("total") or ANIM_SPACE
+    free, known = m.get("free"), m.get("free") is not None
+    if free is None:   # never looked at a sign (or its firmware does not say): no overhead known
+        free = total - sum(cost(a["bytes"]) for a in anims)
+    return {"anims": anims, "free": free, "total": total, "sets": m.get("sets") or [], "settings": m.get("settings") or {},
+            "sums": {}, "via": (m.get("upload") or m.get("download") or {}).get("via"), "kind": "", "at": seen,
+            "source": "board.json" if known else "none"}
+
+
+NEW_ID = "~new"   # a clip without a name yet (no animation id has a ~)
+
+
+def space_report(ws, nbytes=0, name="", crc=None, delete_removed=False):
+    """What the sign will hold after the next Upload, by the upload plan's own
+    rules (whole blocks, the sign's file-system overhead, MARGIN for every
+    upload, upload order), with an optional new clip of nbytes added to the
+    workspace as `name` (replacing a workspace animation of that name).
+    -> {total, overhead, margin, source, base, clip, holdings, ...}; base / clip:
+    {fits, missing (bytes to free so that every upload fits), freeAfter}."""
+    look = planned_look(ws)
+    local = ws.anim_info()
+    total = look.get("total") or ANIM_SPACE
+    overhead = max(0, total - look["free"] - sum(cost(a["bytes"]) for a in look["anims"]))
+
+    def outcome(loc):
+        plan = make_plan(ws, look, delete_removed, loc)
+        puts = [s for s in plan["steps"] if s["op"] in ("add", "replace")]
+        missing = max([0] + [s["bytes"] + MARGIN - s["room"] for s in puts])
+        dels = {s["id"] for s in plan["steps"] if s["op"] == "delete"}
+        hold = [{"id": a, "bytes": loc[a]["bytes"], "kind": "workspace"} for a in sorted(loc)]
+        hold += [{"id": a["id"], "bytes": a["bytes"], "kind": "sign"} for a in look["anims"] if a["id"] not in loc and a["id"] not in dels]
+        return {"fits": missing == 0, "missing": missing, "freeAfter": plan["freeAfter"], "uploads": len(puts)}, hold
+
+    base, hold = outcome(local)
+    out = {"total": total, "overhead": overhead, "margin": MARGIN, "block": BLOCK, "source": look.get("source"), "via": look.get("via"),
+           "deleteRemoved": bool(delete_removed), "base": base, "holdings": hold, "clip": None}
+    if nbytes:
+        aid = anim_id(name) if name else NEW_ID
+        loc = dict(local)
+        old = loc.get(aid)
+        loc[aid] = {"id": aid, "bytes": nbytes, "crc": crc if crc is not None else -1, "full": False, "frames": 0, "ms": 0}
+        res, hold = outcome(loc)
+        for x in hold:
+            if x["id"] == aid:
+                x["kind"] = "new"
+        res.update(name=aid if name else "", bytes=nbytes, cost=cost(nbytes), replaces=old["bytes"] if old else None)
+        out["clip"], out["holdings"] = res, hold
+    return out
 
 
 # ======================================================================= jobs
@@ -467,9 +545,6 @@ def do_download(ws, target, refetch, job):
         board.close()
 
 
-LOOK = {}   # the last look at the sign, for re-planning without asking it again
-
-
 def do_check(ws, target, delete_removed, job):
     import sign_link as sl
     board = sl.open_board(target)
@@ -550,6 +625,7 @@ def page_html():
     html = m.group(1)
     with open(os.path.join(HERE, "sign_editor_inject.html"), encoding="utf-8") as f:
         inject = f.read()
+    inject = inject.replace("<!--STUDIO-->", anim_studio.fragment("/api/studio"))   # the New animation card
     i = html.rfind("</body>")
     return (html[:i] + inject + html[i:]).encode("utf-8")
 
@@ -558,9 +634,11 @@ class H(BaseHTTPRequestHandler):
     ws = None        # Workspace
     R = None         # Renderer
     jobs = None      # Jobs
+    studio = None    # anim_studio.Studio, mounted at /api/studio
 
     def log_message(self, fmt, *args):
-        if args and isinstance(args[0], str) and any(p in args[0] for p in ("/api/preview", "/api/state", "/api/editor/status", "/api/check", "/music/")):
+        if args and isinstance(args[0], str) and any(p in args[0] for p in ("/api/preview", "/api/state", "/api/editor/status", "/api/check", "/music/",
+                                                                             "/api/studio/progress", "/api/studio/media", "/api/editor/space")):
             return
         super().log_message(fmt, *args)
 
@@ -692,7 +770,7 @@ class H(BaseHTTPRequestHandler):
         tracks = ws.tracks()
         md = ws.data.get("musicDir") or ""
         self._json({"workspace": ws.dir, "target": ws.data.get("target"), "renderer": self.R.describe(), "rendererError": self.R.error,
-                    "python": "windows" if os.name == "nt" else "linux", "studio": STUDIO_URL,
+                    "python": "windows" if os.name == "nt" else "linux",
                     "last": {k: m.get(k) for k in ("download", "upload", "check")},
                     "boardTracks": m.get("tracks"), "summary": summary(ws),
                     "music": {"dir": md, "ok": bool(md and os.path.isdir(md)), "tracks": [{"n": i + 1, "name": t} for i, t in enumerate(tracks)]},
@@ -731,6 +809,16 @@ class H(BaseHTTPRequestHandler):
                 return self._music(int(re.sub(r"\D", "", u.path[7:]) or 0))
             if u.path == "/api/editor/status":
                 return self._status()
+            if self.studio.handle_get(self, self.path):
+                return
+            if u.path == "/api/editor/space":   # what the sign will hold after the next Upload, with a converted clip
+                wp = self.studio.work_path(q.get("work", [""])[0])
+                data = b""
+                if wp and os.path.exists(wp):
+                    with open(wp, "rb") as f:
+                        data = f.read()
+                return self._json(space_report(ws, len(data), q.get("name", [""])[0].strip(), crc32(data) if data else None,
+                                               q.get("deleteRemoved", ["0"])[0] in ("1", "true")))
             if u.path == "/api/editor/ports":
                 import sign_link as sl
                 return self._json({"ports": [{"port": p, "kind": k} for p, k in sl.sign_ports()]})
@@ -838,6 +926,8 @@ class H(BaseHTTPRequestHandler):
             write_atomic(ws.anim_path(name), data)
             free, total = ws.space()
             return self._json({"anims": ws.anim_list(), "free": free, "total": total})
+        if self.studio.handle_post(self, self.path):   # the New animation card: open, rotate, convert
+            return
         # ---- the editor's own calls
         if p.startswith("/api/editor/"):
             return self._editor(p[len("/api/editor/"):], self._body())
@@ -900,6 +990,28 @@ class H(BaseHTTPRequestHandler):
             name = anim_id(b.get("name") or os.path.basename(src))
             write_atomic(ws.anim_path(name), data)
             return self._json({"ok": True, "id": name})
+        if what == "addanim":   # the New animation card's clip into the workspace (nothing goes to the sign)
+            wp = self.studio.work_path(b.get("work"))
+            if not wp or not os.path.exists(wp):
+                return self._json({"error": "convert a clip first"}, 400)
+            raw = str(b.get("name") or "").strip()
+            if not raw:
+                return self._json({"error": "give the animation a name"}, 400)
+            name = anim_id(raw)
+            with open(wp, "rb") as f:
+                data = f.read()
+            if anim_header(data) is None:
+                return self._json({"error": "the converted file is not an animation"}, 400)
+            with ws.lock:
+                p = ws.anim_path(name)
+                if os.path.exists(p):
+                    if not b.get("replace"):
+                        return self._json({"error": f"the workspace already has an animation called {name}", "exists": True,
+                                           "id": name, "bytes": os.path.getsize(p)}, 409)
+                    ws.to_trash(p)
+                write_atomic(p, data)
+            free, total = ws.space()
+            return self._json({"ok": True, "id": name, "bytes": len(data), "anims": ws.anim_list(), "free": free, "total": total})
         return self._json({"error": "unknown editor call"}, 404)
 
 
@@ -921,6 +1033,10 @@ def main():
     if H.R.error:
         print(f"text engine: {H.R.error}")
     H.jobs = Jobs()
+    H.studio = anim_studio.Studio(os.path.join(H.ws.dir, "studio", "sources"), os.path.join(H.ws.dir, "studio", "work"), "/api/studio", keep=8)
+    d = anim_studio.deps()
+    if d["missing"]:
+        print(f"New animation card: needs {', '.join(d['missing'])} ({d['install']})")
     print(f"StopLight offline editor: http://localhost:{a.port}/   (workspace {H.ws.dir}; text engine: {H.R.describe()})")
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
     srv.daemon_threads = True

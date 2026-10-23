@@ -81,7 +81,8 @@ real address). Commit only when the user asks.
   keep in step); `python3 tools/beat_jstest.py` (needs Windows node.exe)
   checks it pixel for pixel against `stopcli`.
 - Uploaded animations (2026-10-19): `tools/anim_studio.py` (Windows Python,
-  http://localhost:8090/) opens a GIF, a video or a YouTube link (yt-dlp,
+  http://localhost:8090/; since 2026-10-23 also built into the offline
+  editor as its "New animation" card, see that section) opens a GIF, a video or a YouTube link (yt-dlp,
   only the first 60 s, video only, at most 480p by the shorter side so
   portrait Shorts keep 480 px across; `--download-seconds` and
   `--download-res` on the CLI. Since 2026-10-20 `_fetch_start` fetches just
@@ -119,7 +120,8 @@ real address). Commit only when the user asks.
 - Animation files are **format 3** since 2026-10-19 evening: a context-model
   binary arithmetic coder over the 7-bit pixels (`src/AnimV3.*`, encoder
   `tools/anim_v3.py`, browser decoder `tools/anim_v3.js` pasted into
-  `WebPage.h` and `anim_studio.py`; all three must stay in step, the header's
+  `WebPage.h` (the standalone studio page reads the file at serve time, the
+  editor's card uses the page's copy); all three must stay in step, the header's
   `priorBytes` = 7449 guards the model layout). 32% smaller than format 2 on
   the user's eight clips (deflate variants with bigger windows, frame groups,
   palettes, PNG filters, deltas all stayed within 10%: the clips are 4x4
@@ -245,9 +247,13 @@ the WiFi is hard to reach: **Download** pulls everything from the sign once
 (`src/WebPage.h`, read at every request) then edits a workspace folder
 offline, and **Upload to the sign…** shows a plan (add / replace / delete
 animations with sizes and whether they fit, the sets, the settings) and
-pushes it. The card is injected at serve time from
+pushes it. A second card, **New animation**, is the animation studio:
+make a clip, see its encoded size and whether it fits, add it to the
+workspace. The cards are injected at serve time from
 `tools/sign_editor_inject.html` (it wraps the page's `timeline`,
-`mp3Options`, `render` and `fetch`; no WebPage.h change).
+`mp3Options`, `render` and `fetch`; no WebPage.h change). Needs numpy
+(+ pyserial for the cable); the New animation card also imageio-ffmpeg,
+and yt-dlp for links.
 - Workspace (git-ignored `tools/gfx/editor/`): `workspace.json` (sets,
   settings, volume, music folder, target), `anims/`, `board.json` (what the
   sign had at the last download / upload: sizes, CRC32s, sets, settings),
@@ -287,14 +293,53 @@ pushes it. The card is injected at serve time from
   **Keep it in step with the C++**: `python3 tools/render_parity_test.py`
   (WSL; builds tools/stopcli) compares both byte for byte on ~4200 checks and
   ~1400 renders (`--quick` for a short run); it must print "all identical".
-- The animation studio lists "into the offline editor" as an upload target
-  (http://localhost:8095), and the card imports clips left in tools/gfx.
+- **New animation card** (2026-10-23): the animation studio inside the editor
+  page, injected above "Your animations" (`<!--STUDIO-->` in
+  sign_editor_inject.html becomes `anim_studio.fragment("/api/studio")`).
+  Source (file or link), crop and trim, rotate, shape, convert, preview as in
+  the studio, with the same progress bars; then "5 · Into the workspace":
+  a name, **Add to workspace** (`POST /api/editor/addanim {work, name,
+  replace}`: 409 + `exists` when the name is taken and `replace` is not set,
+  the page asks first; a replaced copy goes to `trash/`), and "The sign
+  after the next Upload": the clip's encoded size (whatever
+  `anim_convert.convert` chose: format 3, or 2 when smaller), a stacked bar
+  and list of what the sign will hold, whether it fits, what is left or
+  missing. `GET /api/editor/space?work=&name=&deleteRemoved=` ->
+  `space_report()`: runs `make_plan` on the planned look (`planned_look`:
+  the last Compare if newer than the last download / upload, else
+  board.json, else an empty 4.7 MB sign) with the clip added under its name,
+  so the rules are the upload plan's own: whole 4 KB blocks (`cost`), the
+  sign's file-system overhead, `MARGIN` 8 KB per upload, upload order;
+  `missing` = the most any upload step lacks (freeing that much makes every
+  step fit). Animations only on the sign count unless the plan's "also
+  delete" box is ticked. Sources and converted clips live in
+  `<workspace>/studio/` (newest 8 kept). Nothing goes to the board until
+  Upload.
+- Code shared with the standalone studio (which stays, on 8090, uploading
+  straight to the sign): `anim_studio.Studio` (server side, mounted at a
+  prefix: `/api` standalone, `/api/studio` in the editor), `fragment()` (the
+  page part: CSS under `.stu`, ids `stu*`, `window.AnimStudio({api,
+  onOpened, onConverted})`, `AnimStudio.bar/rows` for the storage bars),
+  `deps()`. Importing anim_studio needs only numpy: imageio-ffmpeg (every
+  source) and yt-dlp (links) are looked up per request; when missing the card
+  disables itself and shows the pip command, the API answers 400 with it.
+  `anim_convert.download` raises RuntimeError instead of `sys.exit` now.
+- The standalone studio still lists "into the offline editor" as an upload
+  target (http://localhost:8095), and the editor card imports clips left in
+  tools/gfx.
 - Tests: `python3 tools/seriallink_test.py` (the real SerialLink.cpp +
   SetStore.cpp built for the PC with the stand-ins in tools/seriallink_sim/,
-  clean and lossy links), `python3 tools/sign_editor_test.py` (plan unit
-  tests, WiFi round trip with the harness as the sign, cable round trip with
-  the simulated board), `python.exe tools/sign_editor_ui.py <editor url>
-  <music dir> <target>` (headless Edge: no JS errors, sound timing, plan).
+  clean and lossy links), `python3 tools/sign_editor_test.py` (plan and
+  space unit tests, WiFi round trip with the harness as the sign incl. the
+  New animation card's endpoints, cable round trip with the simulated board;
+  needs `.pio/libdeps/s3/ArduinoJson`; the conversion part runs only where
+  the Python has imageio-ffmpeg: `python.exe tools/sign_editor_test.py
+  --studio` runs just that), `python.exe tools/sign_editor_ui.py <editor url>
+  <music dir> <target> [--studio clip]` (headless Edge: no JS errors, sound
+  timing, plan; with `--studio` the New animation card end to end: reported
+  size = the .anm file, the space numbers, add, replace; `--studio-only`
+  skips the rest, `--studio-shot card.png`). Use a throwaway `--workspace`
+  and a free port (8099) for these, never the user's 8095.
   `tools/local_server.py` takes `STOPLIGHT_SETS` / `STOPLIGHT_GFX` to act as
   a second, throwaway sign.
 
