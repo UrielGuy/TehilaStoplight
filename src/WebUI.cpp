@@ -214,18 +214,31 @@ void WebUI::handlePreview(bool rle) {
   for (int i = 0; i < Face::LIGHTS; ++i) {
     const String n = String(i);
     specs[i].sprite = Face::spriteById(_server.arg("g" + n).c_str());
-    if (!specs[i].sprite && _server.arg("k" + n) != "off") {
+    specs[i].effect = Face::effectById(_server.arg("g" + n).c_str());
+    if (!specs[i].sprite && !specs[i].effect && _server.arg("k" + n) != "off") {
       L[i] = Face::layoutFor(i, _server.arg("t" + n).c_str(), _server.arg("s" + n).toInt());
       specs[i].text = &L[i];   // a text that does not fit renders as an empty circle
     }
     specs[i].bg = _server.hasArg("c" + n) ? (_server.arg("c" + n).toInt() & 63) : Face::defaultColour(i);
     specs[i].fg = _server.arg("f" + n).toInt() & 63;
+    specs[i].hueBg = _server.arg("hc" + n).toInt() % 360;
+    specs[i].hueFg = _server.arg("hf" + n).toInt() % 360;
+    const String q = _server.arg("q" + n);   // "a,b,c": quarters 2-4
+    for (int k = 0, from = 0; k < 3 && from < (int)q.length(); ++k) {
+      int comma = q.indexOf(',', from); if (comma < 0) comma = q.length();
+      specs[i].quarters[k] = q.substring(from, comma).toInt() & 63;
+      from = comma + 1;
+    }
   }
   const uint8_t mask = _server.hasArg("m") ? (_server.arg("m").toInt() & 7) : 7;
   const uint32_t k = _server.arg("k").toInt();
+  Face::Beat beat;   // bpm, b = time on the beat grid (default: the frame's k)
+  beat.bpm = _server.arg("bpm").toInt();
+  beat.frameMs = k;
+  beat.gridMs = _server.hasArg("b") ? (uint32_t)_server.arg("b").toInt() : k;
   BitmapCanvas* canvas = _canvas;      // only the web task uses it
   canvas->reset();                     // fresh palette for every image
-  Face::draw(*canvas, specs, mask, k);
+  Face::draw(*canvas, specs, mask, k, beat);
   if (rle) {
     // Build the whole stream first and send it with a Content-Length: a
     // chunked reply with one lost chunk showed up on phones as a partly
@@ -262,7 +275,7 @@ bool WebUI::checkLights(const LightDef l[3], String& err) {
     if (l[i].graphic.length()) {
       if (l[i].graphic.startsWith("u:")) {
         if (!AnimStore::exists(l[i].graphic.substring(2))) { err = String(names[i]) + ": animation not on the sign"; return false; }
-      } else if (!Face::spriteById(l[i].graphic.c_str())) { err = String(names[i]) + ": unknown graphic"; return false; }
+      } else if (!Face::spriteById(l[i].graphic.c_str()) && !Face::effectById(l[i].graphic.c_str())) { err = String(names[i]) + ": unknown graphic"; return false; }
       continue;
     }
     if (l[i].text.length() > SetStore::MAX_TEXT_BYTES) { err = String(names[i]) + ": text too long"; return false; }
@@ -292,7 +305,8 @@ void WebUI::handleLive(bool on) {
   if (deserializeJson(doc, _server.arg("plain"))) { _server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
   KeyFrame f;
   frameFromJson(doc.as<JsonObjectConst>(), f);   // a text that does not fit just shows as an empty circle
-  _app.setDraft(f);
+  const int bpm = doc["bpm"] | 120;
+  _app.setDraft(f, bpm < 10 ? 10 : bpm > 400 ? 400 : bpm);
   sendState();
 }
 

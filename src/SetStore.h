@@ -16,6 +16,8 @@ struct LightDef {
   uint8_t size = 0;          // max font em size, 0 = automatic
   uint8_t bg = 0;
   uint8_t ink = 0;
+  int16_t hueBg = 0, hueInk = 0;   // degrees the circle / ink colour turns on every beat (+ = red -> yellow -> green)
+  uint8_t quarters[3] = {60, 12, 3};   // graphic "fx:quarters": colours of quarters 2-4 (quarter 1 is bg)
   bool on = true;            // false when kind == "off": the light stays dark (dim ring)
 };
 
@@ -35,6 +37,7 @@ struct Loop { uint16_t from = 1, to = 1, count = 1; };
 // through (loops expanded), then the sign moves on to the next set.
 struct TextSet {
   String name;
+  uint16_t bpm = 120;         // tempo of the beat animations (hue jumps, quarters, pulse)
   std::vector<KeyFrame> frames;
   std::vector<Loop> loops;
   // Frame indices (0-based) in play order, loops expanded.

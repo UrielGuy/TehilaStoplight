@@ -37,3 +37,6 @@ TextLayout layoutInCircle(const std::string& utf8, int cx, int cy, int rInner,
                           int maxFontSize = 0);
 
 void drawLayout(const TextLayout& L, Canvas& c, Rgb2 colour);
+// The ink of canvas row y, written into row[0..n) which holds canvas
+// columns x0..x0+n (for drawing a whole row at once).
+void drawLayoutRow(const TextLayout& L, int y, Rgb2* row, int x0, int n, Rgb2 colour);

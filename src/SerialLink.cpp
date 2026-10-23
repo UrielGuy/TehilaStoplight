@@ -1,19 +1,60 @@
 #include "SerialLink.h"
+#include "AccessPoint.h"
 #include "AnimStore.h"
 #include "StopLightApp.h"
 #include <esp_rom_crc.h>
 #include <mbedtls/base64.h>
+#include <esp_heap_caps.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+#include <vector>
 
 static const char* TMP = "/a/.serial";
 uint32_t bootHeap[5] = {0, 0, 0, 0, 0};   // free internal heap at start-up milestones (main.cpp)
+
+#ifndef MP3_TEST   // the MP3 bring-up build has no store, display or player
+extern SetStore store;
+extern SnakeDisplay display;
+extern Mp3Player mp3;
+#endif
+
+// Sets JSON (up to 48 KB) and its parsed document live in PSRAM: the internal
+// heap is ~70 KB when idle.
+static uint8_t* bigAlloc(size_t n) {
+  void* p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return (uint8_t*)(p ? p : malloc(n));
+}
+struct PsramJsonAllocator : ArduinoJson::Allocator {
+  void* allocate(size_t n) override { return bigAlloc(n); }
+  void deallocate(void* p) override { free(p); }
+  void* reallocate(void* p, size_t n) override {
+    void* q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return q ? q : realloc(p, n);
+  }
+};
 
 // One write: a reply line never interleaves with the log.
 void SerialLink::reply(const String& msg) { _s.print("#ANIM " + msg + "\n"); }
 
 void SerialLink::dropUpload() {
   if (_f) _f.close();
-  LittleFS.remove(TMP);
-  _up = _inPacket = false;
+  if (!_upSets) LittleFS.remove(TMP);
+  if (_setsBuf) { free(_setsBuf); _setsBuf = nullptr; }
+  _up = _inPacket = _upSets = false;
+}
+
+void SerialLink::dropSnapshot() {
+  if (_snap) free(_snap);
+  _snap = nullptr; _snapLen = 0;
+}
+
+void SerialLink::sendBlock(unsigned long off, const uint8_t* raw, int got) {
+  unsigned char b64[1040]; size_t olen = 0;
+  mbedtls_base64_encode(b64, sizeof(b64) - 1, &olen, raw, got);
+  b64[olen] = 0;
+  char head[64];
+  snprintf(head, sizeof(head), "BLK %lu %d %08lx ", off, got, (unsigned long)esp_rom_crc32_le(0, raw, got));
+  reply(String(head) + (const char*)b64);
 }
 
 void SerialLink::packetDone() {
@@ -21,7 +62,10 @@ void SerialLink::packetDone() {
   if (esp_rom_crc32_le(0, _buf, _pLen) != _pCrc || _pOff > _got) { reply("NAK " + String(_got)); return; }
   if (_pOff + _pLen <= _got) { reply("ACK " + String(_got)); return; }   // a resend of data we have (our ACK was lost)
   if (_pOff != _got) { reply("NAK " + String(_got)); return; }
-  if (_f.write(_buf, _pLen) != _pLen) { dropUpload(); reply("ERR storage full"); return; }
+  if (_upSets) {
+    if (_got + _pLen > _size) { dropUpload(); reply("ERR more data than announced"); return; }
+    memcpy(_setsBuf + _got, _buf, _pLen);
+  } else if (_f.write(_buf, _pLen) != _pLen) { dropUpload(); reply("ERR storage full"); return; }
   _lastAt = millis();   // a write near the end of the space can take seconds
   _crc = esp_rom_crc32_le(_crc, _buf, _pLen);
   _got += _pLen;
@@ -31,6 +75,7 @@ void SerialLink::packetDone() {
 void SerialLink::poll() {
   const uint32_t now = millis();
   if (_up && now - _lastAt > 60000) { dropUpload(); reply("ERR timeout"); }
+  if (_snap && now - _snapAt > 120000) dropSnapshot();
   if (_inPacket) {
     int avail;
     while (_inPacket && (avail = _s.available()) > 0) {
@@ -85,6 +130,11 @@ void SerialLink::command(const String& line) {
     if (!_up) { reply("ERR no upload open"); return; }
     const uint32_t want = strtoul(line.substring(4).c_str(), nullptr, 16);
     if (_got != _size) { reply("ERR incomplete (" + String(_got) + " of " + String(_size) + ")"); return; }
+    if (_upSets) {
+      if (want != _crc) { dropUpload(); reply("ERR checksum mismatch"); return; }
+      finishSets();
+      return;
+    }
     _f.close(); _up = false;
     String err;
     if (want != _crc) err = "checksum mismatch";
@@ -118,6 +168,7 @@ void SerialLink::command(const String& line) {
          ",\"renderStage\":" + String(AnimStore::dbgRenderStage) + ",\"decStage\":[" + String(AnimStore::dbgDecStage[0]) + "," + String(AnimStore::dbgDecStage[1]) + "]" +
          ",\"cur\":" + _app.debugCurrent() + ",\"heapTotal\":" + String(heap_caps_get_total_size(MALLOC_CAP_INTERNAL)) +
          ",\"bootHeap\":[" + String(bootHeap[0]) + "," + String(bootHeap[1]) + "," + String(bootHeap[2]) + "," + String(bootHeap[3]) + "," + String(bootHeap[4]) + "]}";
+    o = o.substring(0, o.length() - 1) + ",\"web\":" + AccessPoint::webStats(line == "PERF RESET") + "}";
     if (line == "PERF RESET") { animPerf = AnimPerf(); _app.playPerf = StopLightApp::PlayPerf(); }
     reply("PERF " + o);
   } else if (line.startsWith("LOADTEST ")) {   // load an animation's header twice, report
@@ -163,6 +214,13 @@ void SerialLink::command(const String& line) {
   } else if (line.startsWith("GET ")) {
     char name[40]; unsigned long off = 0, len = 0;
     if (sscanf(line.c_str() + 4, "%39s %lu %lu", name, &off, &len) != 3 || len == 0 || len > 768) { reply("ERR bad request"); return; }
+    if (strcmp(name, ".sets") == 0) {   // the SETS snapshot (no animation id starts with a dot)
+      if (!_snap) { reply("ERR no snapshot (send SETS first)"); return; }
+      _snapAt = millis();
+      const int got = off >= _snapLen ? 0 : (int)min<unsigned long>(len, _snapLen - off);
+      sendBlock(off, _snap + (got ? off : 0), got);
+      return;
+    }
     File f = LittleFS.open(AnimStore::pathFor(AnimStore::sanitizeId(name)), "r");
     if (!f) { reply("ERR no such animation"); return; }
     uint8_t raw[768];
@@ -170,12 +228,42 @@ void SerialLink::command(const String& line) {
     if (f.seek(off)) got = f.read(raw, len);
     f.close();
     if (got < 0) got = 0;
-    unsigned char b64[1040]; size_t olen = 0;
-    mbedtls_base64_encode(b64, sizeof(b64) - 1, &olen, raw, got);
-    b64[olen] = 0;
-    char head[64];
-    snprintf(head, sizeof(head), "BLK %lu %d %08lx ", off, got, (unsigned long)esp_rom_crc32_le(0, raw, got));
-    reply(String(head) + (const char*)b64);
+    sendBlock(off, raw, got);
+  } else if (line.startsWith("SUM ")) {   // size and CRC of a stored file (the PC diffs before uploading)
+    const String id = AnimStore::sanitizeId(line.substring(4));
+    File f = LittleFS.open(AnimStore::pathFor(id), "r");
+    if (!f) { reply("ERR no such animation"); return; }
+    uint32_t crc = 0, n = 0;
+    int got;
+    while ((got = f.read(_buf, sizeof(_buf))) > 0) { crc = esp_rom_crc32_le(crc, _buf, got); n += got; }
+    f.close();
+    char hex[12];
+    snprintf(hex, sizeof(hex), "%08lx", (unsigned long)crc);
+    reply("SUM " + id + " " + String(n) + " " + hex);
+#ifndef MP3_TEST
+  } else if (line == "SETS") {
+    dropSnapshot();
+    _app.lockPlayback();
+    const String js = store.toJson();
+    _app.unlockPlayback();
+    _snap = bigAlloc(js.length() + 1);
+    if (!_snap) { reply("ERR out of memory"); return; }
+    memcpy(_snap, js.c_str(), js.length());
+    _snapLen = js.length(); _snapAt = millis();
+    char hex[12];
+    snprintf(hex, sizeof(hex), "%08lx", (unsigned long)esp_rom_crc32_le(0, _snap, _snapLen));
+    reply("SETS " + String(_snapLen) + " " + hex);
+  } else if (line.startsWith("SPUT ")) {
+    dropUpload();
+    _size = line.substring(5).toInt();
+    if (_size < 2 || _size > MAX_SETS_UPLOAD) { reply("ERR bad size (at most " + String(MAX_SETS_UPLOAD) + " bytes)"); return; }
+    _setsBuf = bigAlloc(_size + 1);
+    if (!_setsBuf) { reply("ERR out of memory"); return; }
+    _up = _upSets = true; _got = 0; _crc = 0;
+    reply("READY");
+  } else if (line == "CONF" || line.startsWith("CONF ")) {
+    conf(line.length() > 5 ? line.substring(5) : String());
+#endif
   } else if (line.startsWith("DEL ")) {
     _app.lockPlayback(); AnimStore::remove(AnimStore::sanitizeId(line.substring(4))); _app.unlockPlayback();
     _app.renderCurrent();
@@ -184,3 +272,101 @@ void SerialLink::command(const String& line) {
     reply("ERR unknown command");
   }
 }
+
+#ifndef MP3_TEST
+// The checks WebUI::checkLights makes for the page's Add (keep in step).
+static bool lightsOk(const LightDef l[3], String& err) {
+  static const char* names[3] = {"top", "middle", "bottom"};
+  for (int i = 0; i < 3; ++i) {
+    if (l[i].graphic.length()) {
+      if (l[i].graphic.startsWith("u:")) {
+        if (!AnimStore::exists(l[i].graphic.substring(2))) { err = String(names[i]) + ": animation " + l[i].graphic.substring(2) + " not on the sign"; return false; }
+      } else if (!Face::spriteById(l[i].graphic.c_str()) && !Face::effectById(l[i].graphic.c_str())) { err = String(names[i]) + ": unknown graphic " + l[i].graphic; return false; }
+      continue;
+    }
+    if (l[i].text.length() > SetStore::MAX_TEXT_BYTES) { err = String(names[i]) + ": text too long"; return false; }
+    String t = l[i].text; t.trim();
+    if (t.isEmpty()) continue;
+    TextLayout L = Face::layoutFor(i, l[i].text.c_str(), l[i].size);
+    if (!L.ok()) { err = String(names[i]) + ": " + L.error.c_str(); return false; }
+  }
+  return true;
+}
+
+void SerialLink::finishSets() {
+  String err;
+  std::vector<TextSet> sets;
+  {
+    PsramJsonAllocator alloc;
+    JsonDocument doc(&alloc);
+    if (deserializeJson(doc, (const char*)_setsBuf, _size)) err = "bad json";
+    else if (!doc["sets"].is<JsonArrayConst>()) err = "no sets array";
+    else if (doc["sets"].size() > SetStore::MAX_SETS) err = "at most " + String(SetStore::MAX_SETS) + " sets";
+    else {
+      int k = 0;
+      for (JsonObjectConst o : doc["sets"].as<JsonArrayConst>()) {
+        ++k;
+        TextSet s;
+        setFromJson(o, s);
+        const String where = "set " + String(k) + (s.name.length() ? " (" + s.name + ")" : String()) + ", ";
+        if (s.frames.empty()) { err = where + "no frames"; break; }
+        if (o["frames"].size() > SetStore::MAX_FRAMES) { err = where + "at most " + String(SetStore::MAX_FRAMES) + " frames"; break; }
+        for (size_t f = 0; f < s.frames.size() && err.isEmpty(); ++f) {
+          String e;
+          if (!lightsOk(s.frames[f].l, e)) err = where + "frame " + String(f + 1) + ", " + e;
+        }
+        if (!err.isEmpty()) break;
+        sets.push_back(s);
+      }
+    }
+  }
+  dropUpload();
+  if (!err.isEmpty()) { reply("ERR " + err); return; }
+  _app.lockPlayback();   // the render core reads the sets while preparing frames
+  _app.clearDraft();
+  std::swap(store.sets(), sets);
+  const bool saved = store.save();
+  if (!saved) std::swap(store.sets(), sets);   // the old sets back, nothing written
+  else _app.onSetsChanged();
+  const size_t n = store.sets().size();
+  _app.unlockPlayback();
+  if (!saved) { reply("ERR storage full: the sets take more than " + String(SetStore::MAX_JSON_BYTES / 1000) + " KB once stored"); return; }
+  reply("OK " + String(n) + " " + String(store.toJson().length()));
+}
+
+// Global settings, as POST /api/settings and /api/mp3/volume do (same NVS keys).
+void SerialLink::conf(const String& json) {
+  bool restart = false, redraw = false, colrot = display.colourRotated();
+  if (json.length()) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) { reply("ERR bad json"); return; }
+    Preferences p;
+    p.begin("stoplight", false);
+    if (doc["offDark"].is<bool>()) {
+      const bool dark = doc["offDark"].as<bool>();
+      Face::setOffDark(dark); p.putBool("offdark", dark); redraw = true;
+    }
+    if (doc["rotate180"].is<bool>()) {
+      const bool rot = doc["rotate180"].as<bool>();
+      SnakeDisplay::setRotated(rot); p.putBool("rot180", rot); redraw = true;
+    }
+    if (doc["volume"].is<int>()) {
+      int v = doc["volume"].as<int>(); v = v < 0 ? 0 : v > 30 ? 30 : v;
+      mp3.setVolume(v); p.putUChar("vol", v);
+    }
+    if (doc["colourRotated"].is<bool>() && doc["colourRotated"].as<bool>() != colrot) {   // takes effect at display init
+      colrot = doc["colourRotated"].as<bool>();
+      p.putBool("colrot", colrot); restart = true;
+    }
+    p.end();
+    if (redraw) _app.renderCurrent();
+  }
+  reply(String("CONF {\"offDark\":") + (Face::offDark() ? "true" : "false") + ",\"rotate180\":" + (SnakeDisplay::rotated() ? "true" : "false") +
+        ",\"colourRotated\":" + (colrot ? "true" : "false") + ",\"volume\":" + String(mp3.volume()) + ",\"mp3\":" + (mp3.present() ? "true" : "false") +
+        ",\"tracks\":" + String(mp3.trackCount()) + (restart ? ",\"restart\":true}" : "}"));
+  if (restart) { _s.flush(); delay(300); ESP.restart(); }
+}
+#else
+void SerialLink::finishSets() { dropUpload(); reply("ERR not in this build"); }
+void SerialLink::conf(const String&) { reply("ERR not in this build"); }
+#endif

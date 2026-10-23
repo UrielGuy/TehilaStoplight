@@ -235,7 +235,7 @@ canvas{background:#000;image-rendering:pixelated;display:block;margin:0 auto}
   <div class="row"><select id="mode"><option value="0">original colours</option><option value="1">silhouette</option><option value="2">silhouette inverted</option></select><input type="color" id="fg" value="#ffffff" title="silhouette colour"><input type="color" id="bg" value="#ff0000" title="background colour"></div>
   <canvas id="pv" width="128" height="128" style="width:192px"></canvas>
   <div class="row"><label>Name on the sign <input type="text" id="name" maxlength="24" placeholder="a-z 0-9 - _"></label></div>
-  <div class="row"><select id="sign"><option value="http://192.168.4.1">over WiFi (192.168.4.1)</option></select><button id="rescan" title="Look for the sign on USB">&#8635;</button><button class="pri" id="upload" disabled>Upload to sign</button></div><div class="msg" id="upmsg"></div><div class="prog" id="upprog" hidden><span></span><div class="bar"><i></i></div></div></div>
+  <div class="row"><select id="sign"><option value="http://192.168.4.1">over WiFi (192.168.4.1)</option><option value="http://localhost:8095">into the offline editor (tools/sign_editor.py)</option></select><button id="rescan" title="Look for the sign on USB">&#8635;</button><button class="pri" id="upload" disabled>Upload to sign</button></div><div class="msg" id="upmsg"></div><div class="prog" id="upprog" hidden><span></span><div class="bar"><i></i></div></div></div>
  <div class="card"><h2>On the sign</h2>
   <div class="msg" id="stmsg">Not read yet.</div><div class="stbar" id="stbar" title="storage on the sign"></div><div class="msg" id="stfit"></div>
   <ul id="stlist"></ul><div class="row"><button id="strefresh">Refresh</button></div></div>
@@ -407,7 +407,7 @@ function paint(){requestAnimationFrame(paint);if(!anim)return;let t=(performance
   const p=px[y*anim.w+x];const c=mode?((((p&64)!==0)!==(mode===2))?fg:bg):[LV[(p>>4)&3],LV[(p>>2)&3],LV[p&3]];d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}
  ctx.putImageData(img,0,0)}paint();
 let signPicked=false;
-async function ports(){const j=await fetch('/api/ports').then(r=>r.json()).catch(()=>({ports:[]}));const sel=$('sign'),keep=signPicked?sel.value:'';sel.innerHTML='<option value="http://192.168.4.1">over WiFi (192.168.4.1)</option>';
+async function ports(){const j=await fetch('/api/ports').then(r=>r.json()).catch(()=>({ports:[]}));const sel=$('sign'),keep=signPicked?sel.value:'';sel.innerHTML='<option value="http://192.168.4.1">over WiFi (192.168.4.1)</option><option value="http://localhost:8095">into the offline editor (tools/sign_editor.py)</option>';
  j.ports.forEach(p=>{const o=document.createElement('option');o.value=p.port;o.textContent=`over USB cable: ${p.port} (${p.kind} socket)`;sel.appendChild(o)});
  if([...sel.options].some(o=>o.value===keep))sel.value=keep;else if(j.ports.length)sel.value=j.ports[0].port}
 $('rescan').onclick=async()=>{await ports();signRefresh()};$('sign').onchange=()=>{signPicked=true;signRefresh()};ports().then(signRefresh);   /* a cable wins until the user picks a target */

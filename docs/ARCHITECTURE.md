@@ -32,7 +32,7 @@ web page (phone)  --JSON/RLE-->  WebUI (core 0)  --sets, drafts-->  SetStore (NV
 | `Mp3Player.*` | Serial driver for the MP3 module on UART1 (play, stop, volume, linear fade-out, file count, start-up sequence, reply parsing); polled from the render loop. A play during a fade cancels it and restores the saved volume. | no |
 | `AnimStore.*` | Uploaded animations in LittleFS (`/a/<id>.anm`): list (cached in RAM), load the frame table, validate an upload, paint a frame (formats 1/2 decoded on the spot; format 3 by two background decoder tasks into PSRAM frame rings, see CLAUDE.md). | no |
 | `AnimV3.*` | Portable format 3 decoder (context-model range coder): per-clip `V3Reader`, per-decoder `V3Scratch`, streaming row output. Encoder: `tools/anim_v3.py`; JS twin: `tools/anim_v3.js`. Masked clips (header flag bit 1) code only each light's circle + 2 px. | yes |
-| `SerialLink.*` | Animation upload/list/delete/read-back/rename over the UART and native USB sockets ("#ANIM" lines plus CRC-checked packets with resend), plus diagnostics (PERF, BENCH, PLAY), polled from the web task. | no |
+| `SerialLink.*` | Animation upload/list/delete/read-back/checksum (SUM) over the UART and native USB sockets ("#ANIM" lines plus CRC-checked packets with resend), the whole store of sets (SETS snapshot read with `GET .sets`, SPUT write checked like the page's Add) and the global settings (CONF) for `tools/sign_editor.py`, plus diagnostics (PERF, BENCH, PLAY), polled from the web task. Protocol in the header; PC-side test `tools/seriallink_test.py`. | no |
 | `AccessPoint.*` | SoftAP (channel 6, 20 MHz, up to 8 clients, join/leave log), DNS that answers every A query with the AP address (AsyncUDP task, so it keeps answering while the web server is busy; EDNS queries handled), and "online" answers to the connectivity checks of Android / iOS / Windows / Firefox, so phones keep the network instead of treating it as a captive portal (no sign-in pop-up any more). | no |
 | `WebUI.*`, `WebPage.h` | HTTP API + the single-page UI (PROGMEM, self-contained, no external assets); requests for other hosts are probe answers or a redirect to the page. | no |
 | `main.cpp` | Display init, store, app, AP; web task on core 0, render loop on core 1. | no |
@@ -44,6 +44,7 @@ Light arrays are always indexed top, middle, bottom.
 
 ```json
 {"name":"Morning",
+ "bpm":120,                          // tempo of the beat animations (10..400)
  "frames":[
    {"t":["STOP","המתן",""],          // texts (UTF-8), ignored for a graphic or an off light
     "k":["short","long","off"],      // short/long = which text box the page shows; off = light dark
@@ -58,6 +59,11 @@ Light arrays are always indexed top, middle, bottom.
     // "gm":[0,1,2] 0 original colours, 1 silhouette (ink on circle colour), 2 inverted;
     // "af"/"al": play only [af, af+al) ms of the clip, al 0 = to the end.
     // A 128x384 animation on any light fills the whole sign for that frame.
+    // Beat animations: g = "fx:quarters" (circle colour + "q":[[a,b,c],..] quarters 2-4, clockwise
+    // from the top left, moving one quarter clockwise per beat) or "fx:pulse" (75% disc, full size on
+    // the beat, easing back). "hc"/"hf": degrees the circle / ink colour turns per beat (any light).
+    // The beat grid starts with the set and again at each frame that starts a track; hue jumps and
+    // quarters count beats from their frame's start (Face::Beat).
    ...],
  "loops":[{"from":6,"to":10,"count":10},  // loop sections, 1-based inclusive, non-overlapping
           {"from":12,"to":14,"count":4}]}
@@ -79,7 +85,7 @@ JSON (`SetStore::MAX_JSON_BYTES`), 40 sets, 64 frames and 16 loops per set.
 | `GET /` | the page |
 | `GET /api/state` | `{current, frame, live, heap, heapMin, heapBlock, sets, sizes, sprites, mp3, settings:{offDark}}` (`frame` = 0-based frame being shown) |
 | `GET /api/check?text=&light=&size=` | `{ok,size,lines,maxFit}` or `{ok:false,error,maxFit}` |
-| `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&k0..k2&m=&k=` | RLE frame (`kN=off` = light dark, `m` lit mask, `k` elapsed ms for sprite frames). Unlit lights follow the stored `offDark` setting; `stopcli` and the harness take it as `o=1` |
+| `GET /api/preview.rle?t0..t2&s0..s2&c0..c2&f0..f2&g0..g2&k0..k2&m=&k=` | RLE frame (`kN=off` = light dark, `m` lit mask, `k` elapsed ms for sprite frames; beat animations: `qN=a,b,c`, `hcN`/`hfN`, `bpm`, `b` = ms on the beat grid, default `k`; the page leaves `bpm` out and paints the beat itself, see CLAUDE.md). Unlit lights follow the stored `offDark` setting; `stopcli` and the harness take it as `o=1` |
 | `GET /api/preview.bmp?...` | same as 4-bpp BMP |
 | `POST /api/sets` (set JSON) | add; 400 with reason if a text does not fit or storage is full |
 | `PUT /api/sets/{i}` (set JSON) | replace set i (the page's Edit) |

@@ -78,11 +78,25 @@ void AccessPoint::begin(const char* ssid, const char* password) {
 }
 
 static volatile uint32_t s_webAt = 0, s_webGapMax = 0;
+static volatile uint32_t s_tickUs = 0, s_tickGapUs = 0, s_ticks = 0;   // for "#ANIM PERF" (webStats)
 
 void AccessPoint::webTick() {
-  const uint32_t now = millis();
+  const uint32_t now = millis(), us = micros();
   if (s_webAt && now - s_webAt > s_webGapMax) s_webGapMax = now - s_webAt;
   s_webAt = now;
+  if (s_tickUs && us - s_tickUs > s_tickGapUs) s_tickGapUs = us - s_tickUs;
+  s_tickUs = us; ++s_ticks;
+}
+
+String AccessPoint::webStats(bool reset) {
+  String o = "{\"stations\":" + String(WiFi.softAPgetStationNum()) + ",\"loops\":" + String(s_ticks) +
+             ",\"maxPauseMs\":" + String(s_tickGapUs / 1000.0, 1) + ",\"rssi\":[";
+  wifi_sta_list_t list;   // signal strength of each joined device, as the sign hears it
+  if (esp_wifi_ap_get_sta_list(&list) == ESP_OK)
+    for (int i = 0; i < list.num; ++i) o += String(i ? "," : "") + String(list.sta[i].rssi);
+  o += "]}";
+  if (reset) { s_ticks = 0; s_tickGapUs = 0; }
+  return o;
 }
 
 void AccessPoint::healthLog() {

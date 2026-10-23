@@ -309,3 +309,14 @@ void drawLayout(const TextLayout& L, Canvas& c, Rgb2 colour) {
       for (int x = 0; x < p.g->w; ++x)
         if (glyphBit(*p.font, *p.g, x, y)) c.set(p.x + x, p.y + y, colour);
 }
+
+void drawLayoutRow(const TextLayout& L, int y, Rgb2* row, int x0, int n, Rgb2 colour) {
+  for (const PlacedGlyph& p : L.glyphs) {
+    const int gy = y - p.y;
+    if (gy < 0 || gy >= p.g->h) continue;
+    for (int x = 0; x < p.g->w; ++x) {
+      const int i = p.x + x - x0;
+      if (i >= 0 && i < n && glyphBit(*p.font, *p.g, x, gy)) row[i] = colour;
+    }
+  }
+}

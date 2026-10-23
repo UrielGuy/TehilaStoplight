@@ -31,5 +31,8 @@ namespace AccessPoint {
   // internal heap free / lowest / largest block, PSRAM, the longest pause of
   // the web loop) shows what, the next time it happens.
   void webTick();     // web task, once per loop pass
+  // {"stations","loops","maxPauseMs"} since the last reset: web loop passes
+  // and the longest gap between two of them (for "#ANIM PERF").
+  String webStats(bool reset);
   void healthLog();   // render loop
 }

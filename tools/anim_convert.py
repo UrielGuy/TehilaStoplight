@@ -344,7 +344,6 @@ def serial_reply(s, timeout=8.0):
 def upload_serial(port, name, data, progress=None):
     """Upload over the UART or native USB socket. Returns {"free": n, "port": p} or {"error": why}.
     Packets carry offset + CRC; on a lost packet or reply the board's position decides what is resent."""
-    import time, zlib
     if port in ("", "usb", "auto"):
         ports = sign_ports()
         if not ports:
@@ -354,49 +353,59 @@ def upload_serial(port, name, data, progress=None):
         s = serial_link(port)
     except Exception as e:
         return {"error": f"cannot open {port}: {e}"}
-    err = lambda r: {"error": r[4:] if r and r.startswith("ERR ") else (r or "no answer from the sign (is the new firmware on it?)")}
     try:
         s.reset_input_buffer()
-        s.write(f"\n#ANIM PUT {name} {len(data)}\n".encode())
-        end = time.time() + 25   # the first write on a nearly full file system can take seconds
-        r = serial_reply(s, 25)
-        while r is not None and r != "READY" and not r.startswith("ERR") and time.time() < end:
-            r = serial_reply(s, max(0.1, end - time.time()))   # a stale reply to an earlier command (LIST, GET...): skip it
-        if r != "READY":
-            return err(r)
-        pos, misses = 0, 0
-        while pos < len(data):
-            chunk = data[pos:pos + 2048]
-            s.write(f"\n#ANIM DATA {pos} {len(chunk)} {zlib.crc32(chunk) & 0xFFFFFFFF:08x}\n".encode() + chunk)
-            r = serial_reply(s, 2.5)          # the board NAKs a stalled packet after 1 s
-            while r and r.startswith("ACK ") and int(r[4:]) < pos + len(chunk) and int(r[4:]) <= pos:
-                r = serial_reply(s, 2.5)      # a late ACK for an earlier packet: skip it
-            if r is None:
-                s.write(b"\n#ANIM POS\n")
-                r = serial_reply(s, 2.5)
-            if r and r.split(" ")[0] in ("ACK", "NAK", "POS"):
-                new = int(r.split(" ")[1])
-                misses = 0 if new > pos else misses + 1
-                pos = new
-            elif r and r.startswith("ERR"):
-                return err(r)
-            else:
-                misses += 1
-            if misses > 12:
-                return {"error": f"the link keeps failing at byte {pos} of {len(data)}"}
-            if progress:
-                progress(pos, len(data))
-        s.write(f"\n#ANIM END {zlib.crc32(data) & 0xFFFFFFFF:08x}\n".encode())
-        r = serial_reply(s, 15)
-        while r and r.split(" ")[0] in ("ACK", "NAK", "POS"):   # late replies to resent packets
-            r = serial_reply(s, 15)
-        if r and r.startswith("OK "):
-            return {"free": int(r[3:]), "port": port}
-        return err(r)
+        r = serial_put(s, f"PUT {name} {len(data)}", data, progress)
+        return {"free": int(r.split()[0]), "port": port}
     except Exception as e:
         return {"error": str(e)}
     finally:
         s.close()
+
+
+def serial_put(s, header, data, progress=None, end_timeout=15):
+    """Send data over an open serial link: '#ANIM <header>' (PUT <name> <size> or
+    SPUT <size>), DATA packets, END. Returns the text after the board's 'OK ' or
+    raises RuntimeError(why). progress(done, total)."""
+    import time, zlib
+    def fail(r):
+        raise RuntimeError(r[4:] if r and r.startswith("ERR ") else (r or "no answer from the sign (is the new firmware on it?)"))
+    s.write(f"\n#ANIM {header}\n".encode())
+    end = time.time() + 25   # the first write on a nearly full file system can take seconds
+    r = serial_reply(s, 25)
+    while r is not None and r != "READY" and not r.startswith("ERR") and time.time() < end:
+        r = serial_reply(s, max(0.1, end - time.time()))   # a stale reply to an earlier command (LIST, GET...): skip it
+    if r != "READY":
+        fail(r)
+    pos, misses = 0, 0
+    while pos < len(data):
+        chunk = data[pos:pos + 2048]
+        s.write(f"\n#ANIM DATA {pos} {len(chunk)} {zlib.crc32(chunk) & 0xFFFFFFFF:08x}\n".encode() + chunk)
+        r = serial_reply(s, 2.5)          # the board NAKs a stalled packet after 1 s
+        while r and r.startswith("ACK ") and int(r[4:]) < pos + len(chunk) and int(r[4:]) <= pos:
+            r = serial_reply(s, 2.5)      # a late ACK for an earlier packet: skip it
+        if r is None:
+            s.write(b"\n#ANIM POS\n")
+            r = serial_reply(s, 2.5)
+        if r and r.split(" ")[0] in ("ACK", "NAK", "POS"):
+            new = int(r.split(" ")[1])
+            misses = 0 if new > pos else misses + 1
+            pos = new
+        elif r and r.startswith("ERR"):
+            fail(r)
+        else:
+            misses += 1
+        if misses > 12:
+            raise RuntimeError(f"the link keeps failing at byte {pos} of {len(data)}")
+        if progress:
+            progress(pos, len(data))
+    s.write(f"\n#ANIM END {zlib.crc32(data) & 0xFFFFFFFF:08x}\n".encode())
+    r = serial_reply(s, end_timeout)
+    while r and r.split(" ")[0] in ("ACK", "NAK", "POS"):   # late replies to resent packets
+        r = serial_reply(s, end_timeout)
+    if r and r.startswith("OK "):
+        return r[3:]
+    fail(r)
 
 
 def sign_list(target):

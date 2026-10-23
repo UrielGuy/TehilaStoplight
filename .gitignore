@@ -9,3 +9,6 @@ tools/gfx/bin/
 tools/gfx/work/
 tools/gfx/backup/
 tools/gfx/*.anm
+tools/gfx/editor/
+tools/stopcli.exe
+.claude/

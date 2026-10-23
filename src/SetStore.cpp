@@ -20,6 +20,16 @@ void lightsToJson(JsonObject o, const LightDef l[3]) {
     JsonArray gm = o["gm"].to<JsonArray>();
     for (int i = 0; i < 3; ++i) gm.add(l[i].gmode);
   }
+  if (l[0].hueBg || l[1].hueBg || l[2].hueBg || l[0].hueInk || l[1].hueInk || l[2].hueInk) {
+    JsonArray hc = o["hc"].to<JsonArray>(), hf = o["hf"].to<JsonArray>();
+    for (int i = 0; i < 3; ++i) { hc.add(l[i].hueBg); hf.add(l[i].hueInk); }
+  }
+  bool quarters = false;
+  for (int i = 0; i < 3; ++i) quarters |= l[i].graphic == "fx:quarters";
+  if (quarters) {
+    JsonArray q = o["q"].to<JsonArray>();
+    for (int i = 0; i < 3; ++i) { JsonArray qi = q.add<JsonArray>(); for (uint8_t v : l[i].quarters) qi.add(v); }
+  }
 }
 
 void lightsFromJson(JsonObjectConst o, LightDef l[3]) {
@@ -38,6 +48,13 @@ void lightsFromJson(JsonObjectConst o, LightDef l[3]) {
     l[i].ink = o["f"][i] | 0;
     if (l[i].bg > COLOUR_RANDOM) l[i].bg = DEF_BG[i];
     if (l[i].ink > COLOUR_RANDOM) l[i].ink = 0;
+    const int hc = o["hc"][i] | 0, hf = o["hf"][i] | 0;
+    l[i].hueBg = hc % 360; l[i].hueInk = hf % 360;
+    static const uint8_t DEF_Q[3] = {60, 12, 3};
+    for (int k = 0; k < 3; ++k) {
+      const int v = o["q"][i][k] | (int)DEF_Q[k];
+      l[i].quarters[k] = (v < 0 || v > COLOUR_RANDOM) ? DEF_Q[k] : v;
+    }
   }
 }
 
@@ -55,6 +72,7 @@ void frameFromJson(JsonObjectConst o, KeyFrame& f) {
 
 void setToJson(JsonObject o, const TextSet& s) {
   o["name"] = s.name;
+  o["bpm"] = s.bpm;
   JsonArray fr = o["frames"].to<JsonArray>();
   for (const KeyFrame& f : s.frames) {
     JsonObject fo = fr.add<JsonObject>();
@@ -94,6 +112,8 @@ void setFromJson(JsonObjectConst o, TextSet& s) {
   s = TextSet();
   s.name = (const char*)(o["name"] | "");
   if (s.name.length() > 40) s.name = s.name.substring(0, 40);
+  const int bpm = o["bpm"] | 120;
+  s.bpm = bpm < 10 ? 10 : bpm > 400 ? 400 : bpm;
   if (o["frames"].is<JsonArrayConst>()) {
     for (JsonObjectConst fo : o["frames"].as<JsonArrayConst>()) {
       KeyFrame f; frameFromJson(fo, f); s.frames.push_back(f);

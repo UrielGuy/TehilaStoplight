@@ -65,6 +65,21 @@ real address). Commit only when the user asks.
   `PanelPins.h` stays the maker's, `SnakeDisplay::begin` shifts R/G/B pins
   for the other panel batch; changing it restarts the sign). The page
   reads all three from `settings` in `/api/state`.
+- Beat animations (2026-10-23), drawn by the board: a set has a tempo
+  (`bpm`, default 120); any colour can jump its hue N degrees per beat
+  (`hc`/`hf` per light, palette popup "Hue jump"; `rgb2Hue` in Canvas.h is
+  integer maths, 18 hues at full brightness); graphics `fx:quarters` (4
+  colours turning clockwise per beat, `q` = quarters 2-4) and `fx:pulse`
+  (75% disc, full size on the beat, easing back by 7/8 of the beat). The
+  beat grid starts with the set and restarts at a frame that starts an MP3
+  track (follows the song); hue jumps / quarters count beats since their
+  frame started (`Face::Beat`). `Face::drawLight` now composes whole rows
+  (text via `drawLayoutRow`, sprites clipped to the circle) so a per-beat
+  redraw never flickers; `StopLightApp::loop` redraws only the lights whose
+  `Face::beatState` changed (`renderBeat`). The page paints the beat over
+  the server's start image client-side (`paintBeat`, a mirror of the C++:
+  keep in step); `python3 tools/beat_jstest.py` (needs Windows node.exe)
+  checks it pixel for pixel against `stopcli`.
 - Uploaded animations (2026-10-19): `tools/anim_studio.py` (Windows Python,
   http://localhost:8090/) opens a GIF, a video or a YouTube link (yt-dlp,
   only the first 60 s, video only, at most 480p by the shorter side so
@@ -140,7 +155,14 @@ real address). Commit only when the user asks.
   playback counters, render/decoder stage markers, heap, boot heap
   samples), `#ANIM BENCH <id> <frame>`, `#ANIM PLAY a,b,c` / `STOP`.
   PSRAM: `board_build.arduino.memory_type = qio_opi` + `-DBOARD_HAS_PSRAM`
-  (8 MB embedded, works); idle internal heap ~70 KB.
+  (8 MB embedded, works). `setup()` calls `heap_caps_malloc_extmem_enable(512)`:
+  the SDK reserves no internal RAM once PSRAM is on and sent only allocations
+  of 4 KB+ to PSRAM, so web replies fragmented internal RAM until phones
+  could not join (2026-10-23: 32 KB free, largest block 4 KB). Now idle
+  internal heap ~82 KB, ~80 KB while clips play. `#ANIM PERF` reports
+  `web` {stations, loops, maxPauseMs, rssi[]} for WiFi trouble; decoding
+  barely delays the web task (max pause 4 ms idle, 7 ms during a
+  whole-sign clip).
   `tools/anim_recompress.py [usb|COMx|http://...] [--dry-run]` backs up the
   board's files to `tools/gfx/backup/<time>/`, re-encodes older formats,
   checks the pixels match, and uploads them back under the same names
@@ -213,6 +235,59 @@ real address). Commit only when the user asks.
 - **Partition table** is `partitions.csv` (nvs/app0 at the default offsets,
   the second OTA slot became LittleFS). When flashing a board that still has
   the default table, also write `0x8000 .pio\build\s3\partitions.bin`.
+
+## Offline editor (tools/sign_editor.py, 2026-10-23)
+
+`python.exe tools/sign_editor.py` (default port 8095, `--port`, `--workspace`,
+`--wsl-distro`, `--no-browser`; never 8080/8090) is a local web app for when
+the WiFi is hard to reach: **Download** pulls everything from the sign once
+(WiFi or a USB port, picked in the editor card), the sign's own page
+(`src/WebPage.h`, read at every request) then edits a workspace folder
+offline, and **Upload to the sign…** shows a plan (add / replace / delete
+animations with sizes and whether they fit, the sets, the settings) and
+pushes it. The card is injected at serve time from
+`tools/sign_editor_inject.html` (it wraps the page's `timeline`,
+`mp3Options`, `render` and `fetch`; no WebPage.h change).
+- Workspace (git-ignored `tools/gfx/editor/`): `workspace.json` (sets,
+  settings, volume, music folder, target), `anims/`, `board.json` (what the
+  sign had at the last download / upload: sizes, CRC32s, sets, settings),
+  `incoming/` (a download in progress, resumed per file), `trash/<time>/`
+  (what a download replaced or a delete removed).
+- Plan order: deletes of animations the sign's current sets do not use,
+  then uploads (smallest first, shrinking replacements first; a replacement
+  that does not fit deletes the old copy first, as SerialLink PUT and the HTTP
+  `size=` do), then the sets, then the remaining deletes (pulled forward only
+  when needed for room), then settings (`colourRotated` last: the sign
+  restarts). Each finished step is written to `board.json`, so a broken
+  upload just runs again. Over WiFi the sets go as DELETE/PUT/POST per set
+  (only those that differ, compared with `sign_link.canon_set`, a Python
+  mirror of setFromJson + setToJson: keep it in step with SetStore.cpp).
+- Cable protocol additions in `SerialLink` (needs the firmware of
+  2026-10-23): `SUM <id>` (size + CRC32 of a stored file), `SETS` + `GET .sets
+  <off> <len>` (snapshot of the stored sets), `SPUT <size>` + DATA + END
+  (replace every set, checked like the page's Add; ≤48 KB in, 32 KB stored;
+  PSRAM buffers), `CONF` / `CONF {json}` (offDark, rotate180, volume,
+  colourRotated). Without SUM (older firmware) the plan compares sizes.
+- Music: the card takes the folder that mirrors the SD card; files (.mp3,
+  .wav) play as tracks 1, 2, 3… in name order, so copy them to the card in
+  that order. `/api/state` reports their count as `mp3.tracks`; the preview's
+  "play the whole set" plays / stops / fades them in the browser at each
+  frame start (`/music/<n>`), volume = setting/30.
+- Text engine under Windows Python: a persistent `wsl.exe -e python3
+  tools/sign_editor.py --render-worker` pool running tools/stopcli. The
+  default WSL distro here is **Ubuntu (22.04)**, not the Ubuntu-24.04 that
+  builds tools/stopcli (glibc 2.39), so the worker builds its own copy in
+  `~/.cache/stoplight-editor/` when tools/stopcli does not run.
+- The animation studio lists "into the offline editor" as an upload target
+  (http://localhost:8095), and the card imports clips left in tools/gfx.
+- Tests: `python3 tools/seriallink_test.py` (the real SerialLink.cpp +
+  SetStore.cpp built for the PC with the stand-ins in tools/seriallink_sim/,
+  clean and lossy links), `python3 tools/sign_editor_test.py` (plan unit
+  tests, WiFi round trip with the harness as the sign, cable round trip with
+  the simulated board), `python.exe tools/sign_editor_ui.py <editor url>
+  <music dir> <target>` (headless Edge: no JS errors, sound timing, plan).
+  `tools/local_server.py` takes `STOPLIGHT_SETS` / `STOPLIGHT_GFX` to act as
+  a second, throwaway sign.
 
 ## Build, flash, monitor (from WSL)
 

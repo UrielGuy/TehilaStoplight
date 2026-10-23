@@ -21,7 +21,7 @@ input[type=number]{width:6.5em;padding:6px 8px}
 .light{border-top:1px solid var(--rule);padding:10px 0 6px}.light:first-of-type{border-top:0;padding-top:0}
 .lhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.lhead .name{font-size:14px;flex:1}.lhead select{padding:6px 8px;font-size:14px}
 .swatch{display:inline-block;width:18px;height:18px;border-radius:50%;border:2px solid var(--rule);background:var(--c);cursor:pointer;padding:0}.swatch:hover{border-color:var(--acc)}.swatch.ink{width:14px;height:14px;margin-inline-start:-4px}
-.swatch.rnd{background:conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}.lhead .off{padding:3px 8px;font-size:12px}.lhead .off.on{background:var(--acc);color:#14171b;border-color:var(--acc)}
+.swatch.rnd{background:conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}.swatch.hj{outline:2px dashed var(--acc);outline-offset:1px}.pal .hjrow{grid-column:1/-1;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);padding-top:6px;border-top:1px solid var(--rule);margin-top:4px}.pal .hjrow input{width:5em}.lhead .off{padding:3px 8px;font-size:12px}.lhead .off.on{background:var(--acc);color:#14171b;border-color:var(--acc)}
 .fitrow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap}.fit{font-size:13px;min-height:18px;color:var(--muted)}.fit.bad{color:var(--bad)}.fit.ok{color:var(--green)}
 .sz{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}.sz span{min-width:6.5em;text-align:center;font-variant-numeric:tabular-nums}
 .tm{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}.tm input[type=checkbox]{accent-color:var(--acc);width:18px;height:18px}
@@ -29,7 +29,7 @@ button{font:inherit;padding:9px 14px;border-radius:6px;border:1px solid var(--ru
 button.primary{background:var(--acc);color:#14171b;border-color:var(--acc);font-weight:600}button:disabled{opacity:.45;cursor:not-allowed}
 button.small{padding:5px 10px;font-size:13px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
-.frames{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}.frames button.cur{border-color:var(--acc);color:var(--acc)}
+.frames{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}.frames button.cur{border-color:var(--acc);color:var(--acc)}.frames button[data-i]{touch-action:none;user-select:none;-webkit-user-select:none}.frames button.dragging{opacity:.4}.frames button.dropL{box-shadow:-4px 0 0 var(--acc)}.frames button.dropR{box-shadow:4px 0 0 var(--acc)}
 .pal{position:absolute;z-index:5;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px;display:grid;grid-template-columns:repeat(8,26px);gap:5px;box-shadow:0 8px 30px rgba(0,0,0,.4)}.pal button{width:26px;height:26px;border-radius:5px;border:2px solid transparent;cursor:pointer;padding:0}.pal button.on{border-color:var(--acc)}.pal .named{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap;padding-bottom:6px;border-bottom:1px solid var(--rule);margin-bottom:4px}.pal .named button{width:auto;padding:0 8px;font-size:12px;color:#fff;text-shadow:0 0 2px #000}
 ul{list-style:none;margin:0;padding:0}li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--rule)}
 li .n{color:var(--muted);font-size:13px;width:2ch}li .t{display:grid;gap:2px}li .t span{display:block;font-size:15px;white-space:pre-line}li .t span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-inline-end:8px;background:var(--c)}li .t small{color:var(--muted);font-size:11px;margin-inline-start:8px}
@@ -55,6 +55,7 @@ li .t em{display:block;font-style:normal;color:var(--muted);font-size:12px}li .t
   <div class="card" id="editor">
     <h2 id="edTitle">New set &middot; סט חדש</h2>
     <input type="text" id="name" maxlength="40" placeholder="Name this set (optional) · שם" autocomplete="off" style="font-size:16px;margin-bottom:10px">
+    <div class="row" style="margin:0 0 10px"><span class="tm">Beat <input type="number" id="bpm" min="10" max="400" step="1" style="width:5em"> BPM &middot; tempo of the hue jumps, quarters and pulse</span></div>
     <div id="framesBar">
       <div class="frames" id="frames"></div>
       <div class="row" style="margin-top:4px"><span class="tm">Show this frame for <input type="number" id="frameMs" min="100" max="600000" step="100"> ms</span>
@@ -91,6 +92,16 @@ const $=id=>document.getElementById(id);
 const DEFC=[48,52,12],RND=64,LV=[0,140,195,255],NAMES=['Top · עליון','Middle · אמצעי','Bottom · תחתון'];
 const NAMED=[['Red',48],['Orange',52],['Yellow',60],['Green',12],['Cyan',15],['Blue',3],['Magenta',51],['White',63],['Pink',53],['Lime',28]];
 let SIZES=[],SPRITES=[],ANIMS=[],state={sets:[],current:0};
+const FX=[['fx:quarters','Quarters · 4 colours turning'],['fx:pulse','Pulse · 75% ↔ full size']],DEFQ=[60,12,3];
+/* ---------- beat animations: mirror of rgb2Hue (Canvas.h) and Face::drawLight (Face.cpp), keep in step ---------- */
+function hueTurn(c,deg){let r=(c>>4)&3,g=(c>>2)&3,b=c&3;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;if(!d||deg%360===0)return c;
+ let h=mx===r?(g>=b?60*(g-b)/d:360-60*(b-g)/d):mx===g?120+60*(b-r)/d:240+60*(r-g)/d;h=((h+deg)%360+360)%360;
+ const up=mn+Math.floor((h%60*d+30)/60),dn=mn+Math.floor(((60-h%60)*d+30)/60);[r,g,b]=[[mx,up,mn],[dn,mx,mn],[mn,mx,up],[mn,dn,mx],[up,mn,mx],[mx,mn,dn]][Math.floor(h/60)];return(r<<4)|(g<<2)|b}
+function beatOf(bpm,grid,frame){return{bpm,st:bpm?Math.floor(grid*bpm/60000)-Math.floor(Math.max(0,grid-frame)*bpm/60000):0,ph:bpm?(grid*bpm)%60000:0}}
+const hueDeg=(st,per)=>(st*per)%360;
+function pulseD(b){if(!b.bpm)return 96;const r=60000-b.ph;return 96+Math.floor((32*r*r+1800000000)/3600000000)}
+const pvRgb=c=>c?rgbOf(c):[12,12,12];   /* the server's preview shows black as 12,12,12 (Preview.cpp) */
+function beatColours(l,r,b){const bg=l.hc?hueTurn(r.c,hueDeg(b.st,l.hc)):r.c,fg=l.hf?hueTurn(r.f,hueDeg(b.st,l.hf)):r.f;return{bg,fg}}
 /* ---------- uploaded animations ---------- */
 function animList(free,total){const ul=$('animList');ul.innerHTML='';const pct=b=>total?(100*b/total).toFixed(b*100<total?1:0)+'%':'';
  ANIMS.forEach(a=>{const li=document.createElement('li');li.innerHTML=`<span class="n"></span><span class="t"><strong></strong><em></em></span><span class="acts"><button class="small" data-r>Rename</button><button class="small" data-d>Delete</button></span>`;
@@ -226,10 +237,10 @@ function decodeV3(buf) {
 }
 async function inflateRaw(bytes,size){const out=new Uint8Array(size);try{const r=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();let p=0;for(;;){const{done,value}=await r.read();if(done)break;out.set(value.subarray(0,Math.max(0,size-p)),p);p+=value.length}}catch(e){}return out}
 function animFrameIn(a,ms,from,len){if(a.frames.length<2||!a.total)return 0;if(from>=a.total)from=0;if(!len||from+len>a.total)len=a.total-from;let t=from+ms%len;for(let i=0;i<a.delays.length;i++){if(t<a.delays[i])return i;t-=a.delays[i]}return 0}
-function paintAnims(e,ms){const L=e.L;let full=-1;L.forEach((l,i)=>{if(full<0&&l.k.startsWith('u:')){const a=ANIMDATA[l.k.slice(2)];if(a&&a.h>a.w)full=i}});
+function paintAnims(e,ms,b){const L=e.L;let full=-1;L.forEach((l,i)=>{if(full<0&&l.k.startsWith('u:')){const a=ANIMDATA[l.k.slice(2)];if(a&&a.h>a.w)full=i}});
  L.forEach((l,i)=>{if(!l.k.startsWith('u:'))return;const a=ANIMDATA[l.k.slice(2)];if(a===undefined){animData(l.k.slice(2));return}if(!a)return;
   if(full>=0&&i!==full)return;if(full<0&&!((e.m>>i)&1))return;
-  const r=roll(e.fi,i,l),fg=rgbOf(r.f),bg=rgbOf(r.c),px=a.frames[animFrameIn(a,ms,l.af||0,l.al||0)],y0=full>=0?0:i*128;
+  const r=roll(e.fi,i,l),bc=beatColours(l,r,b||beatOf(0,0,0)),fg=rgbOf(bc.fg),bg=rgbOf(bc.bg),px=a.frames[animFrameIn(a,ms,l.af||0,l.al||0)],y0=full>=0?0:i*128;
   const img=ctx.getImageData(0,y0,a.w,a.h),d=img.data;
   for(let y=0;y<a.h;y++)for(let x=0;x<a.w;x++){if(full<0){const dx=2*x-127,dy=2*y-127;if(dx*dx+dy*dy>16384)continue}
    const v=px[y*a.w+x],k=(y*a.w+x)*4;let c;if(!l.gm)c=[LV[(v>>4)&3],LV[(v>>2)&3],LV[v&3]];else c=(((v&64)!==0)!==(l.gm===2))?fg:bg;d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}
@@ -244,8 +255,8 @@ function mp3Options(){const sel=$('frameMp3'),cur=ed.frames[ed.cur].mp3||0;sel.i
  const n=Math.max(MP3.tracks,cur>0?cur:0);for(let i=1;i<=n;i++){const o=document.createElement('option');o.value=i;o.textContent='track '+String(i).padStart(3,'0')+'.mp3';sel.appendChild(o)}
  if(cur>0&&cur>MP3.tracks){sel.options[sel.options.length-1].textContent+=' (not on card)'}sel.value=String(cur);$('mp3Test').disabled=!(cur>0)}
 const MAXF=64;
-let ed={name:'',frames:[newFrame()],cur:0,loops:[],editing:null};
-try{const s=JSON.parse(localStorage.getItem('stoplight.editor')||'null');if(s&&s.frames&&s.frames.length)ed={...ed,name:s.name||'',frames:s.frames,cur:Math.min(s.cur||0,s.frames.length-1),loops:s.loops||[]}}catch(e){}
+let ed={name:'',bpm:120,frames:[newFrame()],cur:0,loops:[],editing:null};
+try{const s=JSON.parse(localStorage.getItem('stoplight.editor')||'null');if(s&&s.frames&&s.frames.length)ed={...ed,name:s.name||'',bpm:s.bpm||120,frames:s.frames,cur:Math.min(s.cur||0,s.frames.length-1),loops:s.loops||[]}}catch(e){}
 function persist(){try{localStorage.setItem('stoplight.editor',JSON.stringify(ed))}catch(e){}}
 function debounce(fn,ms){let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>fn(...a),ms)}}
 const cur=()=>ed.frames[ed.cur].lights;
@@ -260,6 +271,9 @@ function buildLights(){const L=cur(),host=$('lights');host.innerHTML='';
 </div>`;
   host.appendChild(d);
   const sel=$('k'+i);SPRITES.forEach(sp=>{const o=document.createElement('option');o.value=sp.id;o.textContent=sp.name;sel.appendChild(o)});
+  {const g=document.createElement('optgroup');g.label='On the beat';FX.forEach(([v,n])=>{const o=document.createElement('option');o.value=v;o.textContent=n;g.appendChild(o)});sel.appendChild(g)}
+  const qr=document.createElement('div');qr.className='row tm';qr.id='qr'+i;qr.innerHTML=`Quarters, clockwise from the top left: <button type="button" class="swatch" id="qc${i}" title="Quarter 1 = circle colour"></button>`+[0,1,2].map(k=>`<button type="button" class="swatch" id="q${i}_${k}" title="Quarter ${k+2}"></button>`).join('')+' · they move one quarter clockwise on every beat';d.appendChild(qr);
+  $('qc'+i).onclick=e=>{e.preventDefault();e.stopPropagation();openPal(i,'bg')};[0,1,2].forEach(k=>{$('q'+i+'_'+k).onclick=e=>{e.preventDefault();e.stopPropagation();openPal(i,'q'+k)}});
   if(ANIMS.length){const g=document.createElement('optgroup');g.label='Your animations';ANIMS.forEach(a=>{const o=document.createElement('option');o.value='u:'+a.id;o.textContent=a.id+(a.full?' (whole sign)':'');g.appendChild(o)});sel.appendChild(g)}
   if(l.k.startsWith('u:')&&!ANIMS.find(a=>'u:'+a.id===l.k)){const o=document.createElement('option');o.value=l.k;o.textContent=l.k.slice(2)+' (missing)';sel.appendChild(o)}
   const ar=document.createElement('div');ar.className='row animrow';ar.id='ar'+i;ar.innerHTML=`<select id="gm${i}"><option value="0">original colours</option><option value="1">silhouette in light colours</option><option value="2">silhouette inverted</option></select><span class="tm">play from <input type="number" id="af${i}" min="0" step="0.1" style="width:4.5em"> s for <input type="number" id="al${i}" min="0" step="0.1" style="width:4.5em" placeholder="all"> s</span>`;d.appendChild(ar);
@@ -274,23 +288,28 @@ function buildLights(){const L=cur(),host=$('lights');host.innerHTML='';
   $('sw'+i).onclick=e=>{e.preventDefault();e.stopPropagation();openPal(i,'bg')};$('fw'+i).onclick=e=>{e.preventDefault();e.stopPropagation();openPal(i,'ink')};
   $('up'+i).onclick=()=>step(i,1);$('dn'+i).onclick=()=>step(i,-1);
   swatchUI(i);showBoxes(i)});
- {const fb=$('frames');fb.innerHTML='';ed.frames.forEach((f,i)=>{const b=document.createElement('button');b.type='button';b.className='small'+(i===ed.cur?' cur':'');b.textContent=(i+1);b.onclick=()=>{ed.cur=i;persist();buildLights();refit()};fb.appendChild(b)});
+ {const fb=$('frames');fb.innerHTML='';ed.frames.forEach((f,i)=>{const b=document.createElement('button');b.type='button';b.className='small'+(i===ed.cur?' cur':'');b.textContent=(i+1);b.dataset.i=i;b.title='Frame '+(i+1)+' · drag to move it';b.onclick=()=>{if(dragDone){dragDone=false;return}ed.cur=i;persist();buildLights();refit()};fb.appendChild(b)});
   const add=document.createElement('button');add.type='button';add.className='small';add.textContent='+ at end';add.disabled=ed.frames.length>=MAXF;add.onclick=()=>insertFrame(ed.frames.length);fb.appendChild(add);
   $('frameMs').value=ed.frames[ed.cur].ms;mp3Options();buildLoops()}
- $('name').value=ed.name||'';$('add').textContent=ed.editing===null?'Add set':'Save changes';$('addNew').classList.toggle('hide',ed.editing===null);$('cancel').classList.toggle('hide',ed.editing===null);$('edTitle').textContent=ed.editing===null?'New set · סט חדש':'Editing set '+(ed.editing+1)+(ed.name?' · '+ed.name:'')}
-function showBoxes(i){const l=cur()[i],g=l.k!=='short'&&l.k!=='long';$('ar'+i).classList.toggle('hide',!l.k.startsWith('u:'));$('t'+i).classList.toggle('hide',l.k!=='short');$('l'+i).classList.toggle('hide',l.k!=='long');$('szrow'+i).classList.toggle('hide',g);$('off'+i).classList.toggle('on',l.k==='off')}
-function swatchUI(i){const l=cur()[i];const sw=$('sw'+i),fw=$('fw'+i);sw.classList.toggle('rnd',l.c===RND);fw.classList.toggle('rnd',l.f===RND);sw.style.setProperty('--c',css(l.c));fw.style.setProperty('--c',css(l.f))}
-function openPal(i,which){document.querySelectorAll('.pal').forEach(p=>p.remove());const l=cur()[i],pal=document.createElement('div');pal.className='pal';const v=which==='ink'?l.f:l.c;
+ $('name').value=ed.name||'';$('bpm').value=ed.bpm||120;$('add').textContent=ed.editing===null?'Add set':'Save changes';$('addNew').classList.toggle('hide',ed.editing===null);$('cancel').classList.toggle('hide',ed.editing===null);$('edTitle').textContent=ed.editing===null?'New set · סט חדש':'Editing set '+(ed.editing+1)+(ed.name?' · '+ed.name:'')}
+function showBoxes(i){const l=cur()[i],g=l.k!=='short'&&l.k!=='long';$('ar'+i).classList.toggle('hide',!l.k.startsWith('u:'));$('qr'+i).classList.toggle('hide',l.k!=='fx:quarters');$('t'+i).classList.toggle('hide',l.k!=='short');$('l'+i).classList.toggle('hide',l.k!=='long');$('szrow'+i).classList.toggle('hide',g);$('off'+i).classList.toggle('on',l.k==='off')}
+function swatchUI(i){const l=cur()[i];const sw=$('sw'+i),fw=$('fw'+i);sw.classList.toggle('rnd',l.c===RND);fw.classList.toggle('rnd',l.f===RND);sw.style.setProperty('--c',css(l.c));fw.style.setProperty('--c',css(l.f));
+ sw.classList.toggle('hj',!!l.hc);fw.classList.toggle('hj',!!l.hf);sw.title='Circle colour'+(l.hc?`, turning ${l.hc}° on every beat`:'');fw.title='Text / figure colour'+(l.hf?`, turning ${l.hf}° on every beat`:'');
+ const q=l.q||DEFQ,qc=$('qc'+i);qc.classList.toggle('rnd',l.c===RND);qc.style.setProperty('--c',css(l.c));[0,1,2].forEach(k=>{const b=$('q'+i+'_'+k);b.classList.toggle('rnd',q[k]===RND);b.style.setProperty('--c',css(q[k]))})}
+function openPal(i,which){document.querySelectorAll('.pal').forEach(p=>p.remove());const l=cur()[i],pal=document.createElement('div');pal.className='pal';const v=which==='ink'?l.f:which==='bg'?l.c:(l.q||DEFQ)[+which[1]];
  const named=document.createElement('div');named.className='named';
  const mk=(n,c,bg)=>{const b=document.createElement('button');b.type='button';b.textContent=n;b.style.background=bg;b.onclick=()=>pick(i,c,which);if(c===v)b.className='on';named.appendChild(b)};
  mk('Random',RND,'conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)');mk('Black',0,'#000');NAMED.forEach(([n,c])=>mk(n,c,css(c)));pal.appendChild(named);
  for(let c=0;c<64;c++){const b=document.createElement('button');b.type='button';b.style.background=css(c);b.title='rgb '+((c>>4)&3)+((c>>2)&3)+(c&3);if(c===v)b.className='on';b.onclick=()=>pick(i,c,which);pal.appendChild(b)}
- const sw=$((which==='ink'?'fw':'sw')+i),r=sw.getBoundingClientRect();pal.style.left=Math.min(r.left+window.scrollX,window.innerWidth-260)+'px';pal.style.top=(r.bottom+window.scrollY+6)+'px';document.body.appendChild(pal);
+ if(which==='bg'||which==='ink'){const key=which==='ink'?'hf':'hc',h=document.createElement('label');h.className='hjrow';h.innerHTML=`Hue jump <input type="number" step="10" min="-350" max="350"> ° on every beat (0 = steady; + turns red→yellow→green)`;
+  const inp=h.querySelector('input');inp.value=l[key]||0;inp.onchange=()=>{l[key]=Math.max(-359,Math.min(359,Math.round(+inp.value||0)));inp.value=l[key];swatchUI(i);persist();preview()};pal.appendChild(h)}
+ const sw=$((which==='ink'?'fw':which==='bg'?'sw':'q'+i+'_')+(which[0]==='q'?which[1]:i)),r=sw.getBoundingClientRect();pal.style.left=Math.min(r.left+window.scrollX,window.innerWidth-260)+'px';pal.style.top=(r.bottom+window.scrollY+6)+'px';document.body.appendChild(pal);
  setTimeout(()=>document.addEventListener('click',function h(e){if(!pal.contains(e.target)){pal.remove();document.removeEventListener('click',h)}}),0)}
-function pick(i,c,which){const l=cur()[i];if(which==='ink')l.f=c;else l.c=c;swatchUI(i);document.querySelectorAll('.pal').forEach(p=>p.remove());persist();preview()}
+function pick(i,c,which){const l=cur()[i];if(which==='ink')l.f=c;else if(which==='bg')l.c=c;else{l.q=[...(l.q||DEFQ)];l.q[+which[1]]=c}swatchUI(i);document.querySelectorAll('.pal').forEach(p=>p.remove());persist();preview()}
 
 /* ---------- fit checks and sizes ---------- */
 async function checkLight(i){const l=cur()[i];if(l.k==='off'){fits[i]=true;F(i,'','light off');sizeUI(i);update();return}if(l.k.startsWith('u:')){const a=ANIMS.find(x=>'u:'+x.id===l.k);fits[i]=!!a;F(i,a?'ok':'bad',a?`animation ${a.id}: ${(a.ms/1000).toFixed(1)} s, ${a.frames} frames${a.full?' · fills the whole sign':''}`:'animation not on the sign');sizeUI(i);update();return}
+ if(l.k==='fx:quarters'||l.k==='fx:pulse'){fits[i]=true;F(i,'ok',l.k==='fx:pulse'?`pulse: 75% of the circle, jumps to full size on every beat (${ed.bpm} BPM)`:`quarters: turn one quarter clockwise on every beat (${ed.bpm} BPM)`);sizeUI(i);update();return}
  if(l.k!=='short'&&l.k!=='long'){fits[i]=true;F(i,'ok','graphic: '+((SPRITES.find(s=>s.id===l.k)||{}).name||l.k));sizeUI(i);update();return}
  const v=l.t.trim();if(!v){fits[i]=true;F(i,'','');eff[i]=0;sizeUI(i);update();return}
  const r=await fetch(`/api/check?text=${encodeURIComponent(v)}&light=${i}&size=${l.s}`).then(r=>r.json()).catch(()=>({ok:false,error:'no connection'}));
@@ -325,40 +344,67 @@ $('vol').onchange=()=>fetch('/api/mp3/volume',{method:'POST',headers:{'Content-T
 // Insert a blank frame at `at`; loop sections at or beyond it shift to keep pointing at the same frames.
 function insertFrame(at,copy){if(ed.frames.length>=MAXF)return;ed.frames.splice(at,0,copy?JSON.parse(JSON.stringify(ed.frames[ed.cur])):newFrame());
  ed.loops.forEach(L=>{if(L.from>at)L.from++;if(L.to>=at+1&&L.to>=L.from)L.to++;if(L.from>at&&L.to<L.from)L.to=L.from});ed.cur=at;persist();buildLights();refit()}
+// Move frame a to position b (0-based). Loop sections follow their frames, as for a delete then an insert.
+function moveFrame(a,b){if(a===b)return;const f=ed.frames.splice(a,1)[0];
+ ed.loops=ed.loops.map(L=>({from:L.from>a+1?L.from-1:L.from,to:L.to>a?L.to-1:L.to,count:L.count})).filter(L=>L.to>=L.from);
+ ed.frames.splice(b,0,f);ed.loops.forEach(L=>{if(L.from>b)L.from++;if(L.to>=b+1&&L.to>=L.from)L.to++;if(L.from>b&&L.to<L.from)L.to=L.from});
+ ed.cur=b;persist();buildLights();refit()}
+/* Drag a frame number onto another to move it there (pointer events: mouse and touch alike). */
+let drag=null,dragDone=false;
+{const fb=$('frames'),btnAt=(x,y)=>{const el=document.elementFromPoint(x,y);return el&&el.closest?el.closest('#frames button[data-i]'):null},
+  clear=()=>fb.querySelectorAll('button').forEach(b=>b.classList.remove('dragging','dropL','dropR'));
+ fb.addEventListener('pointerdown',e=>{const b=e.target.closest('button[data-i]');if(!b||e.button>0)return;drag={from:+b.dataset.i,x:e.clientX,y:e.clientY,on:false,to:null};b.setPointerCapture(e.pointerId)});
+ fb.addEventListener('pointermove',e=>{if(!drag)return;if(!drag.on&&Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<6)return;drag.on=true;clear();
+  fb.querySelector(`button[data-i="${drag.from}"]`).classList.add('dragging');const t=btnAt(e.clientX,e.clientY);drag.to=t?+t.dataset.i:null;
+  if(t&&drag.to!==drag.from)t.classList.add(drag.to>drag.from?'dropR':'dropL')});
+ const end=e=>{if(!drag)return;const d=drag;drag=null;clear();if(!d.on)return;dragDone=true;setTimeout(()=>{dragDone=false},300);if(e.type==='pointerup'&&d.to!==null&&d.to!==d.from)moveFrame(d.from,d.to)};
+ fb.addEventListener('pointerup',end);fb.addEventListener('pointercancel',end)}
 $('insBefore').onclick=()=>insertFrame(ed.cur);$('insAfter').onclick=()=>insertFrame(ed.cur+1);
 $('dupFrame').onclick=()=>insertFrame(ed.cur+1,true);
 $('delFrame').onclick=()=>{if(ed.frames.length<=1)return;const at=ed.cur;ed.frames.splice(at,1);
  ed.loops=ed.loops.map(L=>({from:L.from>at+1?L.from-1:L.from,to:L.to>at?L.to-1:L.to,count:L.count})).filter(L=>L.to>=L.from);ed.cur=Math.max(0,at-1);persist();buildLights();refit()};
 $('name').addEventListener('input',()=>{ed.name=$('name').value;persist()});
+$('bpm').onchange=()=>{ed.bpm=Math.max(10,Math.min(400,Math.round(+$('bpm').value||120)));$('bpm').value=ed.bpm;persist();refit()};
 
 /* ---------- what gets sent ---------- */
 const isText=l=>l.k==='short'||l.k==='long';
-function lightsJson(L){return{t:L.map(l=>isText(l)?l.t.trim():''),k:L.map(l=>l.k==='long'?'long':l.k==='off'?'off':'short'),g:L.map(l=>(isText(l)||l.k==='off')?'':l.k),s:L.map(l=>l.s),c:L.map(l=>l.c),f:L.map(l=>l.f),gm:L.map(l=>l.gm||0),af:L.map(l=>l.af||0),al:L.map(l=>l.al||0)}}
+function lightsJson(L){return{t:L.map(l=>isText(l)?l.t.trim():''),k:L.map(l=>l.k==='long'?'long':l.k==='off'?'off':'short'),g:L.map(l=>(isText(l)||l.k==='off')?'':l.k),s:L.map(l=>l.s),c:L.map(l=>l.c),f:L.map(l=>l.f),gm:L.map(l=>l.gm||0),af:L.map(l=>l.af||0),al:L.map(l=>l.al||0),hc:L.map(l=>l.hc||0),hf:L.map(l=>l.hf||0),q:L.map(l=>l.q||DEFQ)}}
 const maskOf=L=>L.reduce((m,l,i)=>m|(l.k!=='off'?1<<i:0),0);
-function setJson(){const name=(ed.name||'').trim().slice(0,40);return{name,frames:ed.frames.map(f=>({...lightsJson(f.lights),m:maskOf(f.lights),ms:f.ms,mp3:f.mp3||0,...(f.mp3===-2?{fade:f.fade||3}:{})})),loops:ed.loops.map(L=>({from:L.from,to:L.to,count:L.count}))}}
+function setJson(){const name=(ed.name||'').trim().slice(0,40);return{name,bpm:ed.bpm||120,frames:ed.frames.map(f=>({...lightsJson(f.lights),m:maskOf(f.lights),ms:f.ms,mp3:f.mp3||0,...(f.mp3===-2?{fade:f.fade||3}:{})})),loops:ed.loops.map(L=>({from:L.from,to:L.to,count:L.count}))}}
 function playlist(frames,loops){const out=[],n=frames.length;let i=0;while(i<n&&out.length<400){const L=loops.find(x=>x.from-1===i&&x.to<=n&&x.to>=x.from);if(L){for(let c=0;c<L.count&&out.length<400;c++)for(let k=i;k<L.to;k++)out.push(k);i=L.to}else{out.push(i);i++}}return out}
-function draftJson(){const L=cur();return{...lightsJson(L),m:maskOf(L)}}
+function draftJson(){const L=cur();return{...lightsJson(L),m:maskOf(L),bpm:ed.bpm||120}}
 
 /* ---------- preview: timeline of {lights, mask, ms} played on a canvas ---------- */
 const ctx=$('pv').getContext('2d');let frames={},fails={},animTimer=null,animGen=0,rolls={};
 function decodeRle(buf){const b=new Uint8Array(buf);if(b.length<7||b[0]!==82||b[1]!==76)return null;const w=b[2]|(b[3]<<8),h=b[4]|(b[5]<<8),n=b[6];const pal=[];for(let i=0;i<n;i++)pal.push([b[7+i*3],b[8+i*3],b[9+i*3]]);
  const img=ctx.createImageData(w,h),d=img.data;let p=0,o=7+n*3;while(o+1<b.length){const v=b[o]|(b[o+1]<<8);o+=2;const c=pal[v>>12]||[0,0,0];let len=v&4095;while(len--&&p<d.length){d[p++]=c[0];d[p++]=c[1];d[p++]=c[2];d[p++]=255}}
  return p===d.length?img:null}   /* incomplete stream: reject, the caller refetches */
-function timeline(){if(!$('playAll').checked){const f=ed.frames[ed.cur];return[{L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:ed.cur}]}
- const pl=loopErrors().some(Boolean)?ed.frames.map((_,i)=>i):playlist(ed.frames,ed.loops);return pl.map((fi,pi)=>{const f=ed.frames[fi];return{L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:pi}})}
-function roll(fi,i,l){const key=fi+':'+i;if(!rolls[key]){const c=l.c===RND?rnd(0):l.c;rolls[key]={c,f:l.f===RND?rnd(c):l.f}}return rolls[key]}   /* fi = playlist position, so a looped frame re-rolls each pass like the sign does */
-function query(e){const L=e.L;return L.map((l,i)=>{const r=roll(e.fi,i,l);const text=isText(l)?l.t.trim():'';const g=(isText(l)||l.k==='off')?'':l.k;return`t${i}=${encodeURIComponent(text)}&s${i}=${l.s}&c${i}=${r.c}&f${i}=${r.f}&g${i}=${g}&k${i}=${l.k==='off'?'off':''}`}).join('&')}
+function timeline(){let t=0,b0=0;if(!$('playAll').checked){const f=ed.frames[ed.cur];return[{L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:ed.cur,start:0,b0:0}]}
+ const pl=loopErrors().some(Boolean)?ed.frames.map((_,i)=>i):playlist(ed.frames,ed.loops);return pl.map((fi,pi)=>{const f=ed.frames[fi];if(pi&&f.mp3>0)b0=t;const e={L:f.lights,m:maskOf(f.lights),ms:f.ms,fi:pi,start:t,b0};t+=f.ms;return e})}
+/* Beat animations painted over the server's image of the frame's start: quarters and pulse lights are drawn
+   whole, hue-jumping lights get their circle and ink colours swapped (Face::drawLight does the same on the LEDs). */
+function paintBeat(e,b){if(!b.bpm||e.L.some(l=>l.k.startsWith('u:')&&(ANIMDATA[l.k.slice(2)]||{}).h>128))return;
+ e.L.forEach((l,i)=>{if(!((e.m>>i)&1)||l.k.startsWith('u:'))return;const fx=l.k==='fx:quarters'?1:l.k==='fx:pulse'?2:0;if(!fx&&!l.hc&&!l.hf)return;
+  const r=roll(e.fi,i,l),{bg,fg}=beatColours(l,r,b),img=ctx.getImageData(0,i*128,128,128),d=img.data;
+  if(fx){let q=[bg,bg,bg,bg],D=128;if(fx===1){const deg=hueDeg(b.st,l.hc||0),cols=[bg,...r.q.map(v=>hueTurn(v,deg))];q=[0,1,2,3].map(k=>cols[(k+4-b.st%4)%4])}else D=pulseD(b);
+   const c4=q.map(pvRgb),blk=pvRgb(0);for(let y=0;y<128;y++){const dy=2*y-127;for(let x=0;x<128;x++){const dx=2*x-127,k=(y*128+x)*4,c=dx*dx+dy*dy<=D*D?c4[dy<0?(dx<0?0:1):(dx<0?3:2)]:blk;d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}}}
+  else{const ink=fg===bg?(bg?0:63):fg,b0=pvRgb(r.c),f0=pvRgb(r.f===r.c?(r.c?0:63):r.f),b1=pvRgb(bg),f1=pvRgb(ink);
+   for(let k=0;k<d.length;k+=4){const c=d[k]===b0[0]&&d[k+1]===b0[1]&&d[k+2]===b0[2]?b1:d[k]===f0[0]&&d[k+1]===f0[1]&&d[k+2]===f0[2]?f1:null;if(c){d[k]=c[0];d[k+1]=c[1];d[k+2]=c[2]}}}
+  ctx.putImageData(img,0,i*128)})}
+function roll(fi,i,l){const key=fi+':'+i;if(!rolls[key]){const c=l.c===RND?rnd(0):l.c;rolls[key]={c,f:l.f===RND?rnd(c):l.f,q:(l.q||DEFQ).map(v=>v===RND?rnd(c):v)}}return rolls[key]}   /* fi = playlist position, so a looped frame re-rolls each pass like the sign does */
+function query(e){const L=e.L;return L.map((l,i)=>{const r=roll(e.fi,i,l);const text=isText(l)?l.t.trim():'';const g=(isText(l)||l.k==='off')?'':l.k;return`t${i}=${encodeURIComponent(text)}&s${i}=${l.s}&c${i}=${r.c}&f${i}=${r.f}&g${i}=${g}&k${i}=${l.k==='off'?'off':''}&q${i}=${r.q.join(',')}`}).join('&')}
 const preview=debounce(()=>{const gen=++animGen;clearTimeout(animTimer);frames={};fails={};rolls={};if(!$('live').checked)return;liveSend();
  const tl=timeline(),cycle=tl.reduce((s,e)=>s+e.ms,0),t0=Date.now();
- const entryAt=ms=>{let t=ms%cycle;for(const e of tl){if(t<e.ms)return e;t-=e.ms}return tl[0]};
+ const entryAt=ms=>{const t=ms%cycle;for(const e of tl)if(t<e.start+e.ms)return[e,t];return[tl[0],t]};
+ const beatFx=e=>e.L.some(l=>l.k.startsWith('fx:')||l.hc||l.hf);
  const used=e=>e.L.map(l=>SPRITES.find(s=>s.id===l.k)).filter(Boolean);
  let busy=false;
- const tick=async()=>{if(gen!==animGen)return;const ms=Date.now()-t0,e=entryAt(ms),sp=used(e);const key=e.fi+':'+e.m+':'+sp.map(s=>s.frames>1?Math.floor(ms/s.ms)%s.frames:0).join(',');
+ const tick=async()=>{if(gen!==animGen)return;const ms=Date.now()-t0,[e,t]=entryAt(ms),sp=used(e),bt=beatOf(+ed.bpm||0,t-e.b0,t-e.start);const key=e.fi+':'+e.m+':'+sp.map(s=>s.frames>1?Math.floor(ms/s.ms)%s.frames:0).join(',');
   const hasAnim=e.L.some(l=>l.k.startsWith('u:'));
-  if(frames[key]){ctx.putImageData(frames[key],0,0);if(hasAnim)paintAnims(e,ms)}
+  if(frames[key]){ctx.putImageData(frames[key],0,0);paintBeat(e,bt);if(hasAnim)paintAnims(e,ms,bt)}
   else if(!busy&&!(fails[key]>3)){busy=true;const b=await fetch(`/api/preview.rle?${query(e)}&m=${e.m}&k=${ms}`,{cache:'no-store'}).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);busy=false;if(gen!==animGen)return;
-   const img=b&&decodeRle(b);if(img){frames[key]=img;ctx.putImageData(img,0,0);if(hasAnim)paintAnims(e,ms)}else{fails[key]=(fails[key]||0)+1;if(fails[key]>3)setTimeout(()=>{fails[key]=0},3000)}}
-  const period=hasAnim?50:(tl.length>1||sp.length)?Math.min(100,...sp.map(s=>s.ms)):0;if(period)animTimer=setTimeout(tick,period)};tick()},150);
+   const img=b&&decodeRle(b);if(img){frames[key]=img;ctx.putImageData(img,0,0);paintBeat(e,bt);if(hasAnim)paintAnims(e,ms,bt)}else{fails[key]=(fails[key]||0)+1;if(fails[key]>3)setTimeout(()=>{fails[key]=0},3000)}}
+  const period=hasAnim||beatFx(e)?40:(tl.length>1||sp.length||tl.some(beatFx))?Math.min(100,...sp.map(s=>s.ms)):0;if(period)animTimer=setTimeout(tick,period)};tick()},150);
 
 /* ---------- live on the LEDs ---------- */
 let liveBusy=false,livePending=null,liveLast='';
@@ -381,10 +427,10 @@ async function submit(asNew){if(!(ed.name||'').trim()){const n=prompt('Name for 
  const r=await fetch(editing===null?'/api/sets':'/api/sets/'+editing,{method:editing===null?'POST':'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(setJson())}).then(r=>r.json()).catch(()=>({error:'no connection'}));
  if(r.error){$('msg').textContent='Refused: '+r.error;update();return}$('msg').textContent=editing===null?'Added.':'Saved.';liveLast='';livePending=null;resetEditor();render(r)}
 $('add').onclick=()=>submit(false);$('addNew').onclick=()=>submit(true);
-function resetEditor(){ed={name:'',frames:[newFrame()],cur:0,loops:[],editing:null};persist();buildLights();refit()}
+function resetEditor(){ed={name:'',bpm:120,frames:[newFrame()],cur:0,loops:[],editing:null};persist();buildLights();refit()}
 $('clear').onclick=resetEditor;$('cancel').onclick=resetEditor;
-function loadSet(i){const s=state.sets[i];if(!s)return;const fromJ=(o,pos)=>({k:(o.g&&o.g[pos])?o.g[pos]:((o.k&&o.k[pos])||'short'),t:(o.t&&o.t[pos])||'',s:(o.s&&o.s[pos])||0,c:(o.c&&o.c[pos]!==undefined)?o.c[pos]:DEFC[pos],f:(o.f&&o.f[pos])||0,gm:(o.gm&&o.gm[pos])||0,af:(o.af&&o.af[pos])||0,al:(o.al&&o.al[pos])||0});
- ed={name:s.name||'',frames:s.frames.map(f=>({lights:[0,1,2].map(p=>fromJ(f,p)),ms:f.ms||1000,mp3:f.mp3||0,fade:f.fade||3})),cur:0,loops:(s.loops||[]).map(L=>({from:L.from,to:L.to,count:L.count})),editing:i};
+function loadSet(i){const s=state.sets[i];if(!s)return;const fromJ=(o,pos)=>({k:(o.g&&o.g[pos])?o.g[pos]:((o.k&&o.k[pos])||'short'),t:(o.t&&o.t[pos])||'',s:(o.s&&o.s[pos])||0,c:(o.c&&o.c[pos]!==undefined)?o.c[pos]:DEFC[pos],f:(o.f&&o.f[pos])||0,gm:(o.gm&&o.gm[pos])||0,af:(o.af&&o.af[pos])||0,al:(o.al&&o.al[pos])||0,hc:(o.hc&&o.hc[pos])||0,hf:(o.hf&&o.hf[pos])||0,q:(o.q&&o.q[pos])||DEFQ.slice()});
+ ed={name:s.name||'',bpm:s.bpm||120,frames:s.frames.map(f=>({lights:[0,1,2].map(p=>fromJ(f,p)),ms:f.ms||1000,mp3:f.mp3||0,fade:f.fade||3})),cur:0,loops:(s.loops||[]).map(L=>({from:L.from,to:L.to,count:L.count})),editing:i};
  persist();buildLights();refit();window.scrollTo({top:0,behavior:'smooth'})}
 let lastState='';
 async function load(){const s=await fetch('/api/state').then(r=>r.json()).catch(()=>null);if(!s)return;const key=JSON.stringify([s.sets,s.current,s.live,s.anims]);if(key===lastState)return;lastState=key;render(s)}
@@ -401,8 +447,8 @@ function render(s){state=s;$('livemsg').textContent=s.live?'showing your draft o
   const src=set.frames[0]||{};const cols=src.c||DEFC;
   li.innerHTML=`<span class="n">${i+1}</span><span class="t"><strong class="nm"></strong><span style="--c:${css(cols[0])||'#888'}" dir="auto"></span><span style="--c:${css(cols[1])||'#888'}" dir="auto"></span><span style="--c:${css(cols[2])||'#888'}" dir="auto"></span><em></em></span><span class="acts"><button class="small" data-edit="${i}">Edit</button><button class="small" data-show="${i}">Show now</button><button class="small" data-del="${i}">Delete</button></span>`;
   li.querySelector('.nm').textContent=set.name||'';li.querySelector('.nm').classList.toggle('hide',!set.name);
-  li.querySelectorAll('.t span').forEach((el,k)=>{const g=(src.g||[])[k];const off=(src.k||[])[k]==='off';el.textContent=off?'[off]':g?'['+((SPRITES.find(x=>x.id===g)||{}).name||g)+']':((src.t||[])[k]||'');const sz=(src.s||[])[k];if(sz){const m=document.createElement('small');m.textContent='max '+sz;el.appendChild(m)}});
-  const em=li.querySelector('em'),pl=playlist(set.frames,set.loops||[]),total=pl.reduce((a,fi)=>a+((set.frames[fi]||{}).ms||1000),0),snd=set.frames.filter(f=>f.mp3>0).length,fades=set.frames.filter(f=>f.mp3===-2).length;em.textContent=`${set.frames.length} frame${set.frames.length>1?'s':''}${(set.loops||[]).length?', '+set.loops.map(L=>`${L.from}–${L.to} ×${L.count}`).join(', '):''} · ${(total/1000).toFixed(1)} s per play${snd?' · '+snd+' with sound':''}${fades?' · '+fades+' fade'+(fades>1?'s':''):''}`;
+  li.querySelectorAll('.t span').forEach((el,k)=>{const g=(src.g||[])[k];const off=(src.k||[])[k]==='off';el.textContent=off?'[off]':g?'['+((SPRITES.find(x=>x.id===g)||{}).name||(FX.find(x=>x[0]===g)||[0,''])[1].split(' ·')[0]||g)+']':((src.t||[])[k]||'');const sz=(src.s||[])[k];if(sz){const m=document.createElement('small');m.textContent='max '+sz;el.appendChild(m)}});
+  const em=li.querySelector('em'),pl=playlist(set.frames,set.loops||[]),total=pl.reduce((a,fi)=>a+((set.frames[fi]||{}).ms||1000),0),snd=set.frames.filter(f=>f.mp3>0).length,fades=set.frames.filter(f=>f.mp3===-2).length,beat=set.frames.some(f=>(f.g||[]).some(g=>g&&g.startsWith('fx:'))||(f.hc||[]).some(Boolean)||(f.hf||[]).some(Boolean));em.textContent=`${set.frames.length} frame${set.frames.length>1?'s':''}${(set.loops||[]).length?', '+set.loops.map(L=>`${L.from}–${L.to} ×${L.count}`).join(', '):''} · ${(total/1000).toFixed(1)} s per play${snd?' · '+snd+' with sound':''}${fades?' · '+fades+' fade'+(fades>1?'s':''):''}${beat?' · '+(set.bpm||120)+' BPM':''}`;
   ul.appendChild(li)});
  ul.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>loadSet(+b.dataset.edit));
  ul.querySelectorAll('[data-show]').forEach(b=>b.onclick=async()=>render(await fetch('/api/show/'+b.dataset.show,{method:'POST'}).then(r=>r.json())));

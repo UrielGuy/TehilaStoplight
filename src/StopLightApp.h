@@ -23,7 +23,7 @@ class StopLightApp {
   void onSetsChanged();               // keep `current` valid after add/remove/edit
   // Live editing: show one frame on the LEDs without storing it. Playback is
   // paused until clearDraft() or LIVE_TIMEOUT_MS without a new draft.
-  void setDraft(const KeyFrame& f);
+  void setDraft(const KeyFrame& f, uint16_t bpm = 120);   // bpm: the tempo of the set being edited
   void clearDraft();
   bool hasDraft() const { return _draftActive; }
   // Playback smoothness of uploaded animations (read with "#ANIM PERF").
@@ -53,6 +53,7 @@ class StopLightApp {
     uint32_t ms = 1000;
     int16_t track = 0;
     uint16_t fadeMs = 3000;
+    uint16_t bpm = 0;                 // the set's tempo for the beat animations
     int pos = -1;                     // playlist position it was prepared for
     AnimInfo anim[Face::LIGHTS];      // uploaded animation per light (empty = none)
     uint8_t animMode[Face::LIGHTS] = {0, 0, 0};
@@ -60,7 +61,9 @@ class StopLightApp {
     int animFrame(int i, uint32_t ms) const { return anim[i].frameIn(ms, animFrom[i], animLen[i]); }
     int fullLight = -1;               // light whose animation fills the whole sign
   };
-  bool drawAnims(Canvas& c, const Prepared& p, uint32_t elapsedMs);   // false = an animation frame is not decoded yet
+  bool drawAnims(Canvas& c, const Prepared& p, uint32_t elapsedMs, const Face::Beat& beat, uint8_t which = 7);   // false = an animation frame is not decoded yet
+  Face::Beat beatAt(const Prepared& p, uint32_t now) const;
+  bool renderBeat(const Prepared& p, uint32_t elapsedMs, const Face::Beat& beat, uint8_t which);   // redraw the lights the beat changed
   void startAudio(const Prepared& p);
   void startSet();                                  // build the playlist, prepare frame 0
   void prepareFrame(Prepared& p, const LightDef l[3], uint8_t mask, uint32_t ms);
@@ -77,6 +80,10 @@ class StopLightApp {
 
   int _current = 0;
   uint32_t _setStart = 0, _frameStart = 0;
+  uint32_t _beatStart = 0;            // beat grid: the set's start, or the last frame that started a track
+  uint32_t _lastBeat[Face::LIGHTS] = {0, 0, 0};   // Face::beatState drawn last
+  uint16_t _draftBpm = 120;
+  uint8_t _animWait = 0;              // lights whose animation had no frame ready when the frame started
   std::vector<uint16_t> _playlist;
   int _pos = 0;
   Prepared _slots[2];

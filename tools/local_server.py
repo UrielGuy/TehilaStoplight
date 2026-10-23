@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(ROOT, "tools", "stopcli")
-STORE = os.path.join(ROOT, "tools", "local_sets.json")
+STORE = os.environ.get("STOPLIGHT_SETS") or os.path.join(ROOT, "tools", "local_sets.json")   # another file: a second fake sign (tests)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 MAX_TEXT_BYTES = 720
 
@@ -54,7 +54,7 @@ def sizes():
 def sprites():
     return json.loads(subprocess.run([CLI, "sprites"], capture_output=True, text=True).stdout or "[]")
 
-GFX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gfx")   # uploaded animations (the sign keeps them in LittleFS)
+GFX = os.environ.get("STOPLIGHT_GFX") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "gfx")   # uploaded animations (the sign keeps them in LittleFS)
 
 def anim_id(raw):
     raw = os.path.basename(raw)
@@ -150,7 +150,7 @@ class H(BaseHTTPRequestHandler):
                     if not os.path.exists(anim_path(g[2:])):
                         return f"{prefix}{name}: animation not on the sign"
                 elif g:
-                    if g not in {s["id"] for s in sprites()}:
+                    if g not in {s["id"] for s in sprites()} | {"fx:quarters", "fx:pulse"}:
                         return f"{prefix}{name}: unknown graphic"
                     continue
                 t = str((o.get("t") or ["", "", ""])[i]).strip()
@@ -252,7 +252,7 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/live":
             b = self._body()
             state["live"] = True
-            print(f"[display] LIVE draft: {b.get('t')} g={b.get('g')} m={b.get('m')}")
+            print(f"[display] LIVE draft: {b.get('t')} g={b.get('g')} m={b.get('m')} bpm={b.get('bpm')} hue={b.get('hc')}/{b.get('hf')}")
             self._state()
         else:
             self.send_error(404)

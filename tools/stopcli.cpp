@@ -7,7 +7,9 @@
 //   stopcli ppm key=value ...                  -> PPM on stdout
 //     keys as in the web API: t0..t2 text, s0..s2 size cap, c0..c2 circle colour (0bRRGGBB),
 //     f0..f2 ink colour, g0..g2 graphic id, m lit mask, k elapsed ms (sprite frame),
-//     o=1 unlit lights dark instead of a dim ring
+//     o=1 unlit lights dark instead of a dim ring, g0..g2 = fx:quarters / fx:pulse beat animations
+//     with q0..q2 = "a,b,c" (quarters 2-4), hc0..hc2 / hf0..hf2 hue jump degrees per beat,
+//     bpm tempo, b time on the beat grid (default k)
 // Build: g++ -std=c++11 -O2 -Isrc tools/stopcli.cpp src/TextLayout.cpp src/Face.cpp src/Preview.cpp -o tools/stopcli
 #include <cstdio>
 #include <cstring>
@@ -68,14 +70,28 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 3; ++i) {
       const std::string n = std::to_string(i);
       specs[i].sprite = Face::spriteById(get("g" + n));
-      if (!specs[i].sprite && std::string(get("k" + n)) != "off") { L[i] = Face::layoutFor(i, get("t" + n), atoi(get("s" + n))); specs[i].text = &L[i]; }
+      specs[i].effect = Face::effectById(get("g" + n));
+      if (!specs[i].sprite && !specs[i].effect && std::string(get("k" + n)) != "off") { L[i] = Face::layoutFor(i, get("t" + n), atoi(get("s" + n))); specs[i].text = &L[i]; }
       specs[i].bg = *get("c" + n) ? (atoi(get("c" + n)) & 63) : Face::defaultColour(i);
       specs[i].fg = atoi(get("f" + n)) & 63;
+      specs[i].hueBg = atoi(get("hc" + n)) % 360;
+      specs[i].hueFg = atoi(get("hf" + n)) % 360;
+      const char* q = get("q" + n);
+      for (int k = 0; k < 3 && *q; ++k) {
+        specs[i].quarters[k] = atoi(q) & 63;
+        q = strchr(q, ',');
+        if (!q) break;
+        ++q;
+      }
     }
+    Face::Beat beat;
+    beat.bpm = atoi(get("bpm"));
+    beat.frameMs = (uint32_t)atol(get("k"));
+    beat.gridMs = *get("b") ? (uint32_t)atol(get("b")) : beat.frameMs;
     const uint8_t mask = *get("m") ? (atoi(get("m")) & 7) : 7;
     Face::setOffDark(atoi(get("o")) != 0);           // o=1: unlit lights completely dark
     BitmapCanvas c;
-    Face::draw(c, specs, mask, (uint32_t)atol(get("k")));
+    Face::draw(c, specs, mask, (uint32_t)atol(get("k")), beat);
     if (cmd == "rle") {
       c.rleStream([](const uint8_t* p, size_t n, void*) { fwrite(p, 1, n, stdout); }, nullptr);
       return 0;
