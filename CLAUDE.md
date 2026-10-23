@@ -239,7 +239,7 @@ real address). Commit only when the user asks.
 ## Offline editor (tools/sign_editor.py, 2026-10-23)
 
 `python.exe tools/sign_editor.py` (default port 8095, `--port`, `--workspace`,
-`--wsl-distro`, `--no-browser`, `--system-font`; never 8080/8090) is a local web app for when
+`--no-browser`; never 8080/8090) is a local web app for when
 the WiFi is hard to reach: **Download** pulls everything from the sign once
 (WiFi or a USB port, picked in the editor card), the sign's own page
 (`src/WebPage.h`, read at every request) then edits a workspace folder
@@ -273,11 +273,20 @@ pushes it. The card is injected at serve time from
   that order. `/api/state` reports their count as `mp3.tracks`; the preview's
   "play the whole set" plays / stops / fades them in the browser at each
   frame start (`/music/<n>`), volume = setting/30.
-- Text engine under Windows Python: a persistent `wsl.exe -e python3
-  tools/sign_editor.py --render-worker` pool running tools/stopcli. The
-  default WSL distro here is **Ubuntu (22.04)**, not the Ubuntu-24.04 that
-  builds tools/stopcli (glibc 2.39), so the worker builds its own copy in
-  `~/.cache/stoplight-editor/` when tools/stopcli does not run.
+- Text engine (2026-10-23): `tools/stoplight_render.py`, a pure-Python
+  (numpy) port of what tools/stopcli does: TextLayout.cpp (utf8, bidi with
+  bracket mirroring, exhaustive line breaks up to 14 words then greedy,
+  float32 fills, ink centring, maxFit, the error strings), Face::drawLight
+  (doubled-unit circles, dim ring / offDark, sprites, ink == bg rule,
+  quarters / pulse / hue jumps) and BitmapCanvas (RLE with first-use palette
+  and the 16-colour cap, BMP, PPM). Fonts and figures are parsed from
+  src/fonts/StopFonts.h and src/sprites/Sprites.h at start-up (~80 ms), so
+  regenerated headers need no change there. No WSL, no C++: a preview frame
+  renders in ~0.4 ms on Windows Python, a new layout in 0.1-2 ms (cached).
+  Same CLI as stopcli (`sizes`, `sprites`, `check`, `rle`, `preview`, `ppm`).
+  **Keep it in step with the C++**: `python3 tools/render_parity_test.py`
+  (WSL; builds tools/stopcli) compares both byte for byte on ~4200 checks and
+  ~1400 renders (`--quick` for a short run); it must print "all identical".
 - The animation studio lists "into the offline editor" as an upload target
   (http://localhost:8095), and the card imports clips left in tools/gfx.
 - Tests: `python3 tools/seriallink_test.py` (the real SerialLink.cpp +
@@ -289,13 +298,8 @@ pushes it. The card is injected at serve time from
   `tools/local_server.py` takes `STOPLIGHT_SETS` / `STOPLIGHT_GFX` to act as
   a second, throwaway sign.
 
-On a PC without WSL (and no `tools/stopcli.exe`) previews and fit checks come
-from `tools/sysfont_render.py`: same RLE and API, text in Arial Bold (Pillow,
-basic layout + its own word-level bidi) so sizes and line breaks are only
-close; circles, rings, figures (parsed from Sprites.h) and beat graphics are
-exact. Chosen automatically when the WSL worker cannot start, or with
-`--system-font`. Pip packages for the editor: numpy, pyserial (cable),
-pillow (no WSL).
+Pip packages for the editor (Windows Python): numpy, pyserial (cable). WSL,
+g++ and Pillow are not needed.
 
 ## Build, flash, monitor (from WSL)
 
@@ -456,7 +460,9 @@ view with the Read tool.
    posts `setJson()`, `render(state)` draws the set list. Sprites/sizes come
    from `/api/state` on first load.
 5. Harness: `tools/local_server.py` mirrors the API (validation in
-   `_validate`), `tools/stopcli.cpp` mirrors preview/check. Keep them in step.
+   `_validate`), `tools/stopcli.cpp` mirrors preview/check, and
+   `tools/stoplight_render.py` (the offline editor's engine) ports the same
+   C++ to Python: run `tools/render_parity_test.py`. Keep them in step.
 6. Headless check of the page, then build + flash, then docs.
 
 ## Testing against the real device from this PC

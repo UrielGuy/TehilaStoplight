@@ -229,9 +229,16 @@ def e2e():
 
         # ---- the text engine
         c, rle = req(ed, "GET", "/api/preview.rle?t0=STOP&t1=%D7%94%D7%9E%D7%AA%D7%9F&t2=GO&m=7&k=0")
-        check("preview.rle from stopcli", isinstance(rle, bytes) and rle[:2] == b"RL")
+        check("preview.rle from the text engine", isinstance(rle, bytes) and rle[:2] == b"RL")
         c, r = req(ed, "GET", "/api/check?text=STOP&light=0&size=0")
-        check("check from stopcli", r.get("ok") is True and r.get("size", 0) > 0, r)
+        check("check from the text engine", r.get("ok") is True and r.get("size", 0) > 0, r)
+        for q in ("t0=STOP&t1=%D7%94%D7%9E%D7%AA%D7%9F&t2=GO&m=7&k=0&o=0", "g0=dancing&k=440&t1=Hello%20world&s1=22&c2=0&f2=0&t2=x&m=5&o=1",
+                  "g0=fx:quarters&q0=1,2,3&g1=fx:pulse&hc2=60&t2=GO&bpm=120&k=1300&o=0"):
+            mine, theirs = req(ed, "GET", "/api/preview.rle?" + q)[1], req(sign, "GET", "/api/preview.rle?" + q)[1]
+            check(f"preview.rle as the harness's stopcli ({q[:20]}...)", mine == theirs)
+        for t in ("STOP", "%D7%99%D7%95%D7%9D%20%D7%94%D7%95%D7%9C%D7%93%D7%AA%20%D7%A9%D7%9E%D7%97", "a%20b%20c%20d%20e%20f%20g%20h"):
+            q = f"/api/check?text={t}&light=1&size=30"
+            check(f"check as the harness's stopcli ({t[:12]})", req(ed, "GET", q)[1] == req(sign, "GET", q)[1])
     finally:
         for p in procs:
             p.terminate()

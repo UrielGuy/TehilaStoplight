@@ -19,12 +19,12 @@ from the animation studio. Workspace (default tools/gfx/editor/, git-ignored):
     trash/<time>/    what a download or a delete replaced
 
 Runs best under Windows Python (serial ports and the sign's WiFi are only
-visible there). Texts are laid out by tools/stopcli, the same C++ as the
-firmware: under Windows it runs in WSL through a persistent `wsl.exe` worker
-(or tools/stopcli.exe if you build one); under Linux it is built and run
-directly (WiFi targets only, no serial ports in WSL).
+visible there). Texts are laid out and previews drawn by
+tools/stoplight_render.py, a pure-Python port of the firmware's text engine
+(fonts and figures read from the generated headers in src/), so nothing
+needs compiling. Needs numpy, plus pyserial for the USB cable.
 """
-import argparse, base64, email.parser, email.policy, json, mimetypes, os, queue, re, shutil, struct, subprocess, sys
+import argparse, base64, email.parser, email.policy, json, mimetypes, os, re, shutil, struct, sys
 import threading, time, traceback, urllib.parse, webbrowser, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -39,168 +39,12 @@ FX = {"fx:quarters", "fx:pulse"}
 
 
 # ======================================================================= renderer
-CLI = os.path.join(HERE, "stopcli")
-CLI_SRCS = ["tools/stopcli.cpp", "src/TextLayout.cpp", "src/Face.cpp", "src/Preview.cpp"]
-CLI_DEPS = CLI_SRCS + ["src/fonts/StopFonts.h", "src/TextLayout.h", "src/Face.h", "src/Canvas.h", "src/Preview.h", "src/sprites/Sprites.h"]
-
-
-def build_cli(out=CLI):
-    """As tools/local_server.py: rebuild stopcli when its sources changed."""
-    newest = max(os.path.getmtime(os.path.join(ROOT, p)) for p in CLI_DEPS if os.path.exists(os.path.join(ROOT, p)))
-    if os.path.exists(out) and os.path.getmtime(out) >= newest:
-        return
-    print(f"building {out} ...", file=sys.stderr)
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    tmp = out + ".tmp"
-    subprocess.check_call(["g++", "-std=c++11", "-O2", "-Isrc"] + CLI_SRCS + ["-o", tmp], cwd=ROOT)
-    os.replace(tmp, out)
-
-
-def cli_works(path):
-    try:
-        return subprocess.run([path, "sizes"], capture_output=True, timeout=30).returncode == 0
-    except Exception:
-        return False
-
-
-def render_worker():
-    """--render-worker (runs in WSL): one JSON argument list per line on stdin,
-    answered with '<length>\\n' + stopcli's output on stdout. A WSL distribution
-    other than the one that built tools/stopcli may lack its glibc: it then
-    builds its own copy under ~/.cache."""
-    out = sys.stdout.buffer
-    cli = CLI
-    try:
-        build_cli()
-    except Exception:
-        pass
-    if not cli_works(cli):
-        cli = os.path.expanduser("~/.cache/stoplight-editor/stopcli")
-        try:
-            build_cli(cli)
-        except Exception as e:
-            out.write(f"error: cannot build tools/stopcli in this WSL distribution ({e}); install g++ or pass --wsl-distro\n".encode())
-            out.flush()
-            return
-    out.write(b"ready\n")
-    out.flush()
-    for line in sys.stdin.buffer:
-        try:
-            args = json.loads(line)
-            r = subprocess.run([cli] + args, capture_output=True, timeout=30)
-            data = r.stdout
-            if not data:
-                print(f"stopcli {args[:1]}: exit {r.returncode} {r.stderr[-300:]!r}", file=sys.stderr)
-        except Exception as e:
-            data = json.dumps({"ok": False, "error": f"engine failed: {e}"}).encode()
-        out.write(b"%d\n" % len(data) + data)
-        out.flush()
-
-
-def wsl_path(p):
-    p = os.path.abspath(p)
-    m = re.match(r"^\\\\wsl(?:\.localhost|\$)\\[^\\]+(\\.*)$", p, re.I)
-    if m:
-        return m.group(1).replace("\\", "/")
-    drive, rest = os.path.splitdrive(p)
-    return "/mnt/" + drive[0].lower() + rest.replace("\\", "/")
-
-
-class Renderer:
-    """stopcli: a local binary (Linux, or tools/stopcli.exe on Windows) or a
-    pool of persistent WSL workers (a wsl.exe call costs ~150 ms; a request to
-    a running worker costs what stopcli costs)."""
-
-    def __init__(self, distro=None, workers=2):
-        self.distro, self.nworkers = distro, workers
-        self.pool, self.started, self.start_lock = queue.Queue(), 0, threading.Lock()
-        self._sizes = self._sprites = None
-        self.error = ""
-        exe = os.path.join(HERE, "stopcli.exe")
-        if os.name != "nt":
-            build_cli()
-            self.mode, self.exe = "local", CLI
-        elif os.path.exists(exe):
-            self.mode, self.exe = "exe", exe
-        else:
-            self.mode, self.exe = "wsl", None
-
-    def describe(self):
-        return {"local": "tools/stopcli", "exe": "tools/stopcli.exe", "wsl": f"tools/stopcli in WSL ({self.started} worker(s))"}[self.mode]
-
-    def _spawn(self):
-        cmd = ["wsl.exe"] + (["-d", self.distro] if self.distro else []) + ["-e", "python3", wsl_path(__file__), "--render-worker"]
-        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        first = p.stdout.readline().strip()
-        if first != b"ready":
-            raise RuntimeError(first.decode(errors="replace") or "the WSL text engine did not start (is WSL installed, with python3 and g++?)")
-        return p
-
-    def _worker(self):
-        try:
-            return self.pool.get_nowait()
-        except queue.Empty:
-            pass
-        with self.start_lock:   # one at a time: the first one may be compiling stopcli
-            if self.started < self.nworkers:
-                self.started += 1
-                try:
-                    return self._spawn()
-                except Exception:
-                    self.started -= 1
-                    raise
-        return self.pool.get(timeout=60)
-
-    def run(self, args):
-        args = [str(a) for a in args]
-        if self.mode != "wsl":
-            return subprocess.run([self.exe] + args, capture_output=True, timeout=30).stdout
-        for attempt in range(2):
-            p = self._worker()
-            try:
-                p.stdin.write(json.dumps(args).encode("utf-8") + b"\n")
-                p.stdin.flush()
-                n = int(p.stdout.readline())
-                data = p.stdout.read(n)
-                self.pool.put(p)
-                return data
-            except Exception:
-                try:
-                    p.kill()
-                except Exception:
-                    pass
-                with self.start_lock:
-                    self.started -= 1
-                if attempt:
-                    raise
-        return b""
-
-    def json(self, args, default):
-        try:
-            return json.loads(self.run(args) or b"null") or default
-        except Exception as e:
-            self.error = str(e)
-            return default
-
-    def safe_run(self, args):
-        try:
-            return self.run(args)
-        except Exception as e:
-            self.error = str(e)
-            return b""
-
-    def sizes(self):
-        if not self._sizes:
-            self._sizes = self.json(["sizes"], [])
-        return self._sizes
-
-    def sprites(self):
-        if not self._sprites:
-            self._sprites = self.json(["sprites"], [])
-        return self._sprites
-
-    def check(self, light, text, size=0):
-        return self.json(["check", light, text, size], {"ok": False, "error": "engine failed"})
+# Text layout, fit checks and previews come from tools/stoplight_render.py, a
+# Python port of the firmware's text engine and face drawing (byte for byte
+# the same as tools/stopcli: tools/render_parity_test.py). Its Renderer has
+# describe(), error, sizes(), sprites(), check(light, text, size) and
+# safe_run(["rle"|"preview", "key=value", ...]).
+from stoplight_render import Renderer   # noqa: E402
 
 
 # ======================================================================= workspace
@@ -1060,14 +904,12 @@ class H(BaseHTTPRequestHandler):
 
 
 def main():
-    if "--render-worker" in sys.argv:
-        return render_worker()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8095)
     ap.add_argument("--workspace", default=os.path.join(HERE, "gfx", "editor"))
-    ap.add_argument("--wsl-distro", default=None, help="WSL distribution with g++ and python3 (default: the default one)")
+    ap.add_argument("--wsl-distro", default=None, help=argparse.SUPPRESS)          # old options: the text engine
+    ap.add_argument("--system-font", action="store_true", help=argparse.SUPPRESS)  # no longer needs WSL
     ap.add_argument("--no-browser", action="store_true")
-    ap.add_argument("--system-font", action="store_true", help="draw preview text in a system font (no WSL needed; sizes and line breaks only approximate)")
     a = ap.parse_args()
     for s in (sys.stdout, sys.stderr):
         try:
@@ -1075,14 +917,9 @@ def main():
         except Exception:
             pass
     H.ws = Workspace(a.workspace)
-    H.R = Renderer(a.wsl_distro)
-    if a.system_font or (H.R.mode == "wsl" and not H.R.sizes()):
-        # Windows without WSL (and no tools/stopcli.exe): approximate text in a system font
-        try:
-            import sysfont_render
-            H.R = sysfont_render.SysFontRenderer()
-        except ImportError:
-            print("text previews need WSL, tools/stopcli.exe or Pillow (python -m pip install pillow)")
+    H.R = Renderer()
+    if H.R.error:
+        print(f"text engine: {H.R.error}")
     H.jobs = Jobs()
     print(f"StopLight offline editor: http://localhost:{a.port}/   (workspace {H.ws.dir}; text engine: {H.R.describe()})")
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
